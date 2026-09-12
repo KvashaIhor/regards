@@ -33,31 +33,28 @@ Run it with `python3 regards.py examples/countdown.rgrd`.
 
 ---
 
-## 1. Design thesis
+## 1. Why email
 
-Most themed languages fail because the premise donates only **vocabulary**. Renaming
-`print` to `SHOUT` or `call` to `cast` gives you a skin, not a language.
+Corporate email turns out to be a programming language that nobody bothered to write down.
+Everything a language needs is already in there:
 
-A premise earns its place only if the genre already supplies, in its own natural idiom:
+1. things people keep bringing up (`open reqs`) → variables
+2. `If we still have budget:` → branches
+3. `Per my last email` and `As discussed, Dave.` → loops and calls
+4. `Circling back on …` → output
 
-1. named persistent things → variables
-2. conditional phrasing → branches
-3. a way to refer back to an earlier point → jumps and calls
-4. something that looks like output → I/O
+`Regards,` follows a proud esolang tradition of finding a language somewhere nobody was
+looking. Chef found stacks in mixing bowls, and Shakespeare found registers in two
+characters sharing a stage. This one found one in your inbox.
 
-Chef passes because a mixing bowl is genuinely a stack, and Shakespeare because two
-characters on stage are genuinely two registers.
+Email even brings its own indentation, which is generous of the most-despised artifact in
+office life:
 
-`Regards,` passes on all four, and it has a structural gift the others don't:
+> **Quote depth is block depth.** `>` and `>>` already mean "this belongs to that" in every
+> email client, so there is no new delimiter to learn.
 
-> **Quote depth is block depth.** `>` and `>>` are indentation that no reader would
-> question, because that is already what they mean in an email client.
-
-Every block-structured esolang has to invent a delimiter and pay for it in awkwardness.
-`Regards,` gets one free, and gets it from the most-despised artifact in office life.
-
-The second gift is the terminator. A message ends when it is signed off, so the language
-is named after its halt instruction.
+It brings its own ending, too. A message is over when it is signed off, so the language is
+named after its halt instruction.
 
 ---
 
@@ -69,7 +66,7 @@ A `.rgrd` file is **one email message**, optionally quoting a thread beneath it.
 Subject: <program name>              ← program name, ignored by the interpreter
 Cc: <Name>, <Name>                   ← who `Replying all.` reaches (optional)
 
-Hi <name>,                           ← entry point
+Hi <name>,                           ← entry point (Hello, Hey and Dear work too)
 
 <body>                               ← statements; `>` depth is block depth
 
@@ -133,7 +130,9 @@ Words of three letters or fewer, and words ending in `ss`, keep their `s`, so `g
 Numbers are integers with no upper limit. Halving and splitting round down, toward
 negative infinity.
 
-Wherever a table below says `<n>` or `<a>`, you can write either a number or a variable.
+Wherever a table below says `<n>`, `<a>` or `<expr>`, you can write a number, a variable,
+`what's left after splitting …`, or someone's take (section 4). The one exception is
+`Just to level-set, we have <n> <var>.`, where `<n>` has to be a plain number.
 
 ### Declaration and assignment
 
@@ -210,12 +209,14 @@ setup in the caller and your bump in the person.
 |---|---|
 | `Best,` / `Thanks,` / `Cheers,` / `Warm regards,` / `Kind regards,` / `Best regards,` / `Many thanks,` / `Sincerely,` | **HALT**, exit 0 |
 | `Regards,` | **HALT**, exit 1 |
-| `Sent from my iPhone` | disable all optimizations |
+| `Sent from my iPhone` | disable all optimizations (there aren't any) |
 | `Sorry for the delay!` | sleep 1s |
 | `Thanks in advance.` | warn if the previous `Thoughts?` didn't get a number back |
 
 A bare `Regards,` is not a happy sign-off, and anyone who has received one knows it. It
-halts with exit code 1. `Warm regards,` is fine.
+halts with exit code 1. `Warm regards,` is fine. Only the original email's sign-off sets the
+exit code. When Dave signs off with a bare `Regards,`, the call returns normally and nobody
+mentions it.
 
 `Thanks in advance.` is coercive but not binding, so it is a warning, not an assert, and
 there is no way to turn the warning off.
@@ -228,8 +229,8 @@ A person becomes callable by being defined in the quoted thread below the signat
 name is the first name in the `On …, <Name> wrote:` line. Calling is `As discussed, Dave.`
 
 There is one shared set of variables. Dave reads and changes the same variables the caller
-does, which is how information gets in and out, unless someone takes the conversation offline
-(see below).
+does, unless someone takes the conversation offline. Values can also travel on purpose: the
+ask goes in and a net-net comes back out (both below).
 
 ```
 As discussed, Dave.
@@ -335,9 +336,9 @@ called, the reply quoted underneath runs in its place and the program continues 
 block. The date is for whoever reads the program. The interpreter ignores it.
 
 Nothing before the auto-reply is covered, and an error inside the auto-reply itself goes
-straight through. Parse errors are never caught, since the program hasn't started yet when
-they happen. `Net-net` and `Bumping this.` pass through untouched, because they are not
-errors.
+straight through. Parse errors in the program itself are never caught, since the program
+hasn't started yet when they happen. A broken attachment is different (see below). `Net-net`
+and `Bumping this.` pass through untouched, because they are not errors.
 
 ---
 
@@ -362,15 +363,17 @@ Best,
 Ihor
 ```
 
-If the file is missing or doesn't parse, that is an error at the line that asked for it, so an
-out-of-office can catch it.
+This prints 250, which is Priya's net-net in `examples/finance.rgrd`. If the file is missing
+or doesn't parse, that is an error at the line that asked for it, so an out-of-office can
+catch it.
 
 ---
 
 ## 7. Reply-all
 
 A `Cc:` line above the greeting lists people by name. `Replying all.` calls all of them at
-once, each on a separate thread, and waits for every one to sign off before moving on.
+once, each on its own Python thread (the other kind), and waits for every one to sign off
+before moving on.
 `Replying all, re: <a>.` gives each of them the same `the ask`.
 
 ```
@@ -510,7 +513,8 @@ state that jumps on zero tests its counter with `is at zero` before setting the 
 ### Settled
 
 - **`Per my last email` is a `while` loop.** The faithful unconditional backward jump
-  already exists as `Bumping this.`, and two idioms should not do one job.
+  already exists as `Bumping this.`, and control flow gets one idiom per job. Sign-offs are
+  another matter, because email has a lot of ways to say goodbye.
 - **`Bumping this.` re-sends the current message.** It restarts the program, or the person
   being called, from the top. It does not target labels, because email has none.
 - **`Thanks in advance.` is a warning that cannot be suppressed.**
@@ -544,6 +548,7 @@ Exit codes: 0 for a warm sign-off, 1 for a bare `Regards,`, 2 for an error in th
 ```
 regards/
   README.md          this file
+  LICENSE            CC0 1.0
   regards.py         lexer, parser, interpreter
   examples/
     hello.rgrd

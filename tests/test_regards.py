@@ -287,6 +287,16 @@ class Arguments(ErrorCase):
                                after=person("Dave", "Just to level-set, note is 5.")),
                          "nobody told me about `note`")
 
+    def test_take_with_an_argument_in_a_comparison(self):
+        dave = person("Dave", "Net-net, the ask.")
+        for comparison, expected in (("under", "yes\n"), ("over", "no\n")):
+            with self.subTest(comparison):
+                out, _ = run(email("Just to level-set, sprint is 1.", "Just to level-set, budget is 3.",
+                                   f"If we're {comparison} Dave's take on budget on sprint:",
+                                   '> Circling back on "yes".', "That said:", '> Circling back on "no".',
+                                   after=dave))
+                self.assertEqual(out, expected)
+
     def test_plain_call_still_shares_new_variables(self):
         out, _ = run(email("As discussed, Dave.", "Circling back on note.",
                            after=person("Dave", "Just to level-set, note is 5.")))

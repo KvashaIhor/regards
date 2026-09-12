@@ -189,8 +189,9 @@ COND_PATTERNS = [
     (rf"^there's nothing left after splitting (?P<v>{V}) across (?P<x>.+)$", "divisible"),
     (rf"^we still have (?P<v>{V})$", "positive"),
     (rf"^(?P<v>{V}) is at zero$", "zero"),
-    (rf"^we're under (?P<x>.+?) on (?P<v>{V})$", "lt"),
-    (rf"^we're over (?P<x>.+?) on (?P<v>{V})$", "gt"),
+    # greedy, so `we're under Dave's take on budget on sprint` splits at the last "on"
+    (rf"^we're under (?P<x>.+) on (?P<v>{V})$", "lt"),
+    (rf"^we're over (?P<x>.+) on (?P<v>{V})$", "gt"),
 ]
 
 STATEMENT_PATTERNS = [

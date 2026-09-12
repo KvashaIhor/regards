@@ -3,6 +3,7 @@ import io
 import pathlib
 import sys
 import tempfile
+import time
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -11,19 +12,29 @@ sys.path.insert(0, str(ROOT))
 import regards  # noqa: E402
 
 
-def run(source, stdin=""):
+def run(source, stdin="", **options):
     out = io.StringIO()
-    code = regards.run(source, stdin=io.StringIO(stdin), stdout=out)
+    code = regards.run(source, stdin=io.StringIO(stdin), stdout=out, **options)
     return out.getvalue(), code
 
 
-def email(*body, sign_off="Best,", after=""):
-    return "Subject: test\n\nHi team,\n\n" + "\n".join(body) + f"\n\n{sign_off}\nIhor\n" + after
+def email(*body, sign_off="Best,", after="", cc=None):
+    header = "Subject: test\n" + (f"Cc: {cc}\n" if cc else "")
+    return header + "\nHi team,\n\n" + "\n".join(body) + f"\n\n{sign_off}\nIhor\n" + after
+
+
+def person(name, *body, cc=None):
+    """A quoted message from `name`, to go in the thread below the signature."""
+    header = f"> Cc: {cc}\n" if cc else ""
+    quoted = "".join(f"> {line}\n" for line in body)
+    return (f"\nOn Mon, 7 Sep 2026, {name} Okonkwo <{name.lower()}@example.com> wrote:\n"
+            f"{header}> Hi Ihor,\n{quoted}> Best,\n> {name}\n")
 
 
 class Examples(unittest.TestCase):
     def example(self, name):
-        return run((ROOT / "examples" / name).read_text(encoding="utf-8"))
+        path = ROOT / "examples" / name
+        return run(path.read_text(encoding="utf-8"), path=str(path))
 
     def test_hello(self):
         self.assertEqual(self.example("hello.rgrd"), ("Hello, World\n", 0))
@@ -45,6 +56,18 @@ class Examples(unittest.TestCase):
 
     def test_dave(self):
         self.assertEqual(self.example("dave.rgrd"), ("the deck is attached\n", 0))
+
+    def test_forecast(self):
+        self.assertEqual(self.example("forecast.rgrd"), ("3628800\n", 0))
+
+    def test_ooo(self):
+        self.assertEqual(self.example("ooo.rgrd"), ("no teams yet, so no split. Back Monday\n", 0))
+
+    def test_attachment(self):
+        self.assertEqual(self.example("attachment.rgrd"), ("250\n", 0))
+
+    def test_reply_all(self):
+        self.assertEqual(self.example("reply_all.rgrd"), ("4\n250\n", 0))
 
 
 class Semantics(unittest.TestCase):
@@ -192,11 +215,14 @@ class CommandLine(unittest.TestCase):
         self.assertIn("isn't UTF-8", err)
 
 
-class Errors(unittest.TestCase):
-    def assertError(self, source, fragment):
+class ErrorCase(unittest.TestCase):
+    def assertError(self, source, fragment, **options):
         with self.assertRaises(regards.RegardsError) as ctx:
-            run(source)
+            run(source, **options)
         self.assertIn(fragment, str(ctx.exception))
+
+
+class Errors(ErrorCase):
 
     def test_no_sign_off(self):
         self.assertError("Hi team,\n\nCircling back on \"x\".\n", "The thread is still open")
@@ -217,6 +243,206 @@ class Errors(unittest.TestCase):
     def test_block_needs_body(self):
         self.assertError(email("Just to level-set, x is 1.", "If we still have x:"),
                          "needs a reply quoted underneath")
+
+
+class NetNet(ErrorCase):
+    def test_take_is_the_net_net(self):
+        out, _ = run(email("Just to level-set, forecast is Dave's take.", "Circling back on forecast.",
+                           after=person("Dave", "Net-net, 42.")))
+        self.assertEqual(out, "42\n")
+
+    def test_net_net_ends_the_message_early(self):
+        out, _ = run(email("As discussed, Dave.", 'Circling back on "after".',
+                           after=person("Dave", "Net-net, 1.", 'Circling back on "never".')))
+        self.assertEqual(out, "after\n")
+
+    def test_net_net_leaves_loops(self):
+        out, _ = run(email("Just to level-set, x is 5.", "Circling back on Dave's take.",
+                           after=person("Dave", "Per my last email, while we still have x:",
+                                        "> Net-net, x.", "> Quick flag: one x is now closed.")))
+        self.assertEqual(out, "5\n")
+
+    def test_take_without_net_net(self):
+        self.assertError(email("Circling back on Dave's take.", after=person("Dave", 'Circling back on "hi".')),
+                         "Dave signed off without a net-net")
+
+    def test_net_net_in_the_original_email(self):
+        self.assertError(email("Net-net, 1."), "nobody to report back to")
+
+
+class Arguments(ErrorCase):
+    def test_re_passes_the_ask(self):
+        out, _ = run(email("Just to level-set, budget is 7.", "As discussed, Dave, re: budget.",
+                           after=person("Dave", "Circling back on the ask.")))
+        self.assertEqual(out, "7\n")
+
+    def test_the_ask_is_a_copy(self):
+        out, _ = run(email("Just to level-set, budget is 21.", "Circling back on Dave's take on budget.",
+                           "Circling back on budget.",
+                           after=person("Dave", "Doubling down on the ask.", "Net-net, the ask.")))
+        self.assertEqual(out, "42\n21\n")
+
+    def test_re_takes_the_call_offline(self):
+        self.assertError(email("As discussed, Dave, re: 1.", "Circling back on note.",
+                               after=person("Dave", "Just to level-set, note is 5.")),
+                         "nobody told me about `note`")
+
+    def test_plain_call_still_shares_new_variables(self):
+        out, _ = run(email("As discussed, Dave.", "Circling back on note.",
+                           after=person("Dave", "Just to level-set, note is 5.")))
+        self.assertEqual(out, "5\n")
+
+    def test_recursion(self):
+        dave = person("Dave",
+                      "If the ask is at zero:",
+                      "> Net-net, 1.",
+                      "Just to level-set, smaller is the ask.",
+                      "Quick flag: one smaller is now closed.",
+                      "Just to level-set, total is Dave's take on smaller.",
+                      "Scaling total by the ask.",
+                      "Net-net, total.")
+        self.assertEqual(run(email("Circling back on Dave's take on 6.", after=dave)), ("720\n", 0))
+
+
+class OfflineScopes(ErrorCase):
+    def test_declarations_are_private_to_the_block(self):
+        out, _ = run(email("Just to level-set, x is 1.",
+                           "If we still have x:",
+                           "> Happy to take this offline.",
+                           "> Just to level-set, x is 99.",
+                           "> Circling back on x.",
+                           "Circling back on x."))
+        self.assertEqual(out, "99\n1\n")
+
+    def test_existing_variables_are_still_shared(self):
+        out, _ = run(email("Just to level-set, x is 1.",
+                           "If we still have x:",
+                           "> Happy to take this offline.",
+                           "> Good news — we've added another x.",
+                           "Circling back on x."))
+        self.assertEqual(out, "2\n")
+
+    def test_scope_ends_with_its_block(self):
+        self.assertError(email("Just to level-set, x is 1.",
+                               "If we still have x:",
+                               "> Happy to take this offline.",
+                               "> Just to level-set, note is 5.",
+                               "Circling back on note."),
+                         "nobody told me about `note`")
+
+    def test_people_cannot_see_the_callers_offline_variables(self):
+        self.assertError(email("Happy to take this offline.",
+                               "Just to level-set, secret is 1.",
+                               "As discussed, Dave.",
+                               after=person("Dave", "Circling back on secret.")),
+                         "nobody told me about `secret`")
+
+
+class OutOfOffice(ErrorCase):
+    def test_auto_reply_handles_errors_in_the_rest_of_the_block(self):
+        out, code = run(email("I am currently OOO, returning Monday:",
+                              '> Circling back on "auto-reply".',
+                              "Circling back on budget.",
+                              'Circling back on "never".'))
+        self.assertEqual((out, code), ("auto-reply\n", 0))
+
+    def test_execution_continues_after_the_enclosing_block(self):
+        out, _ = run(email("Just to level-set, x is 1.",
+                           "If we still have x:",
+                           "> I'm currently OOO, returning 14 Sep:",
+                           '> > Circling back on "auto-reply".',
+                           "> Circling back on budget.",
+                           'Circling back on "back".'))
+        self.assertEqual(out, "auto-reply\nback\n")
+
+    def test_errors_in_called_people_reach_the_auto_reply(self):
+        out, _ = run(email("I am currently OOO, returning Monday:",
+                           '> Circling back on "auto-reply".',
+                           "As discussed, Dave.",
+                           after=person("Dave", "Circling back on budget.")))
+        self.assertEqual(out, "auto-reply\n")
+
+    def test_statements_before_the_auto_reply_are_not_covered(self):
+        self.assertError(email("Circling back on budget.",
+                               "I am currently OOO, returning Monday:",
+                               '> Circling back on "auto-reply".'),
+                         "nobody told me about `budget`")
+
+    def test_errors_in_the_auto_reply_are_not_caught(self):
+        self.assertError(email("I am currently OOO, returning Monday:",
+                               "> Circling back on budget.",
+                               "Circling back on forecast."),
+                         "nobody told me about `budget`")
+
+    def test_catching_too_many_replies_does_not_leak_call_depth(self):
+        after = (person("Dave", "If we still have x:", "> Quick flag: one x is now closed.", "> As discussed, Dave.")
+                 + person("Priya", "As discussed, Priya."))
+        out, _ = run(email("Just to level-set, x is 999.",
+                           "If we still have x:",
+                           "> I am currently OOO, returning Monday:",
+                           '> > Circling back on "meeting".',
+                           "> As discussed, Priya.",
+                           "As discussed, Dave.",
+                           'Circling back on "done".',
+                           after=after))
+        self.assertEqual(out, "meeting\ndone\n")
+
+
+class Attachments(ErrorCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        folder = pathlib.Path(tmp.name)
+        (folder / "finance.rgrd").write_text(
+            email('Circling back on "not me".', after=person("Priya", 'Circling back on "numbers attached".')),
+            encoding="utf-8")
+        self.main = str(folder / "main.rgrd")
+
+    def test_attachment_brings_its_people_but_not_its_body(self):
+        out, _ = run(email("Resending with the attachment: finance.rgrd.", "As discussed, Priya."), path=self.main)
+        self.assertEqual(out, "numbers attached\n")
+
+    def test_people_arrive_with_the_attachment(self):
+        self.assertError(email("As discussed, Priya.", "Resending with the attachment: finance.rgrd."),
+                         "Priya isn't on this thread", path=self.main)
+
+    def test_missing_attachment(self):
+        self.assertError(email("Resending with the attachment: nope.rgrd."), "didn't come through", path=self.main)
+
+
+class ReplyAll(ErrorCase):
+    CC = "Dave Okonkwo <dave@example.com>, Priya Okonkwo <priya@example.com>"
+
+    def test_everyone_on_cc_runs_before_the_thread_continues(self):
+        after = person("Dave", "Just to level-set, deck is 1.") + person("Priya", "Just to level-set, budget is 2.")
+        out, _ = run(email("Replying all.", "Circling back on deck.", "Circling back on budget.",
+                           after=after, cc=self.CC))
+        self.assertEqual(out, "1\n2\n")
+
+    def test_reply_all_passes_the_ask_to_everyone(self):
+        after = person("Dave", "Circling back on the ask.") + person("Priya", "Circling back on the ask.")
+        self.assertEqual(run(email("Replying all, re: 7.", after=after, cc=self.CC))[0], "7\n7\n")
+
+    def test_forks_run_at_the_same_time(self):
+        after = person("Dave", "Sorry for the delay!") + person("Priya", "Sorry for the delay!")
+        start = time.monotonic()
+        run(email("Replying all.", after=after, cc=self.CC))
+        self.assertLess(time.monotonic() - start, 1.8)
+
+    def test_cc_inside_a_quoted_message(self):
+        after = (person("Dave", "Replying all.", cc="Priya Okonkwo <priya@example.com>")
+                 + person("Priya", 'Circling back on "from priya".'))
+        self.assertEqual(run(email("As discussed, Dave.", after=after))[0], "from priya\n")
+
+    def test_no_one_on_cc(self):
+        self.assertError(email("Replying all."), "nobody is cc'd")
+
+    def test_cc_d_person_not_on_the_thread(self):
+        self.assertError(email("Replying all.", cc="Dave Okonkwo <dave@example.com>"), "Dave isn't on this thread")
+
+    def test_an_error_in_one_fork_stops_the_program(self):
+        after = person("Dave", "Circling back on budget.") + person("Priya", 'Circling back on "fine".')
+        self.assertError(email("Replying all.", after=after, cc=self.CC), "nobody told me about `budget`")
 
 
 if __name__ == "__main__":

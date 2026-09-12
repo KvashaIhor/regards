@@ -45,10 +45,10 @@ A premise earns its place only if the genre already supplies, in its own natural
 3. a way to refer back to an earlier point → jumps and calls
 4. something that looks like output → I/O
 
-Chef passes because a mixing bowl is genuinely a stack. Shakespeare passes because two
+Chef passes because a mixing bowl is genuinely a stack, and Shakespeare because two
 characters on stage are genuinely two registers.
 
-`Regards,` passes on all four, and it has one structural gift the others don't:
+`Regards,` passes on all four, and it has a structural gift the others don't:
 
 > **Quote depth is block depth.** `>` and `>>` are indentation that no reader would
 > question, because that is already what they mean in an email client.
@@ -67,6 +67,7 @@ A `.rgrd` file is **one email message**, optionally quoting a thread beneath it.
 
 ```
 Subject: <program name>              ← program name, ignored by the interpreter
+Cc: <Name>, <Name>                   ← who `Replying all.` reaches (optional)
 
 Hi <name>,                           ← entry point
 
@@ -86,7 +87,7 @@ Three regions, in order:
 
 | Region | Role |
 |---|---|
-| Subject line | Program name. Decorative. |
+| Header lines | `Subject:` is the program name, and decorative. `Cc:` lists who `Replying all.` reaches. |
 | Body, from `Hi …,` to the sign-off | The program. |
 | Quoted thread below the signature | **The past.** Previously-defined messages, available to call. |
 
@@ -126,6 +127,9 @@ one variable. This is what lets you declare `5 open reqs` and then close `one re
 The corollary is that `open reqs` and `closed reqs` are also one variable. Pick distinct
 nouns.
 
+Words of three letters or fewer, and words ending in `ss`, keep their `s`, so `gas` and
+`business` stay as they are.
+
 Numbers are integers with no upper limit. Halving and splitting round down, toward
 negative infinity.
 
@@ -140,6 +144,7 @@ Wherever a table below says `<n>` or `<a>`, you can write either a number or a v
 | `Looping in <Name>.` / `+<Name>` | no effect; everyone in the quoted thread is already callable |
 | `Per the attached, <var> is now <expr>.` | reassign |
 | `<var> is off the table.` | `var = 0` |
+| `Happy to take this offline.` | variables declared from here to the end of the block are private |
 
 ### Arithmetic
 
@@ -172,12 +177,19 @@ English, is the single best argument for this language existing.
 
 | Idiom | Semantics |
 |---|---|
-| `If <cond>:` | `if` — body is the next quote level |
+| `If <cond>:` | `if`; the body is the next quote level |
 | `That said, if <cond>:` | `else if` |
 | `That said:` | `else` |
 | `Per my last email, while <cond>:` | `while` |
 | `Bumping this.` | re-send the current message: restart the program, or the person being called, from the top |
 | `As discussed, <Name>.` | call person `<Name>` |
+| `As discussed, <Name>, re: <a>.` | call `<Name>` with `<a>` as the ask |
+| `<Name>'s take` | call `<Name>` and use their net-net (expression) |
+| `<Name>'s take on <a>` | the same, with `<a>` as the ask (expression) |
+| `Net-net, <a>.` | end the current person's message and report `<a>` back |
+| `I am currently OOO, returning <date>:` | error handler for the rest of the block |
+| `Resending with the attachment: <file>.` | import the people quoted in another program |
+| `Replying all.` / `Replying all, re: <a>.` | call everyone on the `Cc:` line at once |
 
 `Bumping this.` does not remember anything about the first attempt. Variables keep their
 values, but every statement runs again, including the ones that set them up. Put your
@@ -216,7 +228,8 @@ A person becomes callable by being defined in the quoted thread below the signat
 name is the first name in the `On …, <Name> wrote:` line. Calling is `As discussed, Dave.`
 
 There is one shared set of variables. Dave reads and changes the same variables the caller
-does, which is how he gets information in and out. Nobody on a thread has private state.
+does, which is how information gets in and out, unless someone takes the conversation offline
+(see below).
 
 ```
 As discussed, Dave.
@@ -233,15 +246,150 @@ On Mon, 7 Sep 2026, Dave Okonkwo <dave@…> wrote:
 > Dave
 ```
 
-Dave halts on his own sign-off and control returns to the caller. A person who never
-signs off is a parse error, because the thread is still open.
+When Dave signs off, control returns to the caller. A person who never signs off is a parse
+error, because the thread is still open.
 
 A person can call themselves. After 1000 nested calls the interpreter gives up and
 suggests a meeting.
 
+### Net-net
+
+`Net-net, <a>.` ends the person's message on the spot and reports `<a>` back. To use that
+value, ask for their take:
+
+```
+Just to level-set, budget is Priya's take.
+Circling back on Dave's take on budget.
+```
+
+A take calls the person and evaluates to their net-net. Signing off without one is an error
+when someone asked for a take. `As discussed, Dave.` still works on a person who gives a
+net-net; the net-net ends Dave's message early and the value goes nowhere. A net-net in the
+original email is an error, because there is nobody to report back to.
+
+### The ask
+
+`As discussed, Dave, re: <a>.` and `Dave's take on <a>` both pass Dave one value, which Dave
+reads as `the ask`. It is a copy, so Dave can double it without touching anything of yours.
+
+Passing an argument takes the call offline. Dave gets a private scope that holds `the ask`,
+and anything Dave declares with `Just to level-set` stays in it. A plain
+`As discussed, Dave.` shares everything, as before.
+
+Private variables are what make recursion possible. This is `examples/forecast.rgrd`, which
+prints 3628800:
+
+```
+Subject: Re: 10-year forecast — can Dave run the numbers?
+
+Hi Dave,
+
+Circling back on Dave's take on 10.
+
+Best,
+Ihor
+
+On Mon, 7 Sep 2026, Dave Okonkwo <dave@example.com> wrote:
+> Hi Ihor,
+>
+> If the ask is at zero:
+> > Net-net, 1.
+>
+> Just to level-set, prior year is the ask.
+> Quick flag: one year is now closed.
+> Just to level-set, forecast is Dave's take on prior year.
+> Scaling forecast by the ask.
+> Net-net, forecast.
+>
+> Best,
+> Dave
+```
+
+### Taking it offline
+
+`Happy to take this offline.` makes the rest of its block private. Anything declared after
+it with `Just to level-set` disappears when the block ends, and so does anything created by
+assigning to a name nobody had declared. Variables that already existed are still shared:
+`Good news — we've added another req.` inside the block changes the same `req` as outside.
+
+People never see the caller's offline variables, only the shared ones.
+
 ---
 
-## 5. Examples
+## 5. Out of office
+
+```
+Just to level-set, we have 12 open reqs.
+Just to level-set, we have 0 teams.
+
+I am currently OOO, returning Monday:
+> Circling back on "no teams yet, so no split. Back Monday".
+
+Splitting reqs across teams.
+Circling back on reqs.
+```
+
+`I am currently OOO, returning <date>:` (or `I'm currently OOO`) covers the rest of the
+block it sits in. When a statement after it fails at runtime, even deep inside a person it
+called, the reply quoted underneath runs in its place and the program continues after that
+block. The date is for whoever reads the program. The interpreter ignores it.
+
+Nothing before the auto-reply is covered, and an error inside the auto-reply itself goes
+straight through. Parse errors are never caught, since the program hasn't started yet when
+they happen. `Net-net` and `Bumping this.` pass through untouched, because they are not
+errors.
+
+---
+
+## 6. Attachments
+
+`Resending with the attachment: finance.rgrd.` reads another program and makes everyone
+quoted in its thread callable from then on. The attachment's own body never runs. File names
+are relative to the program you ran, and anyone in the attachment with the same name as
+someone already on the thread replaces them.
+
+```
+Subject: Fwd: budget owner
+
+Hi Dave,
+
+Resending with the attachment: finance.rgrd.
+
+Just to level-set, budget is Priya's take.
+Circling back on budget.
+
+Best,
+Ihor
+```
+
+If the file is missing or doesn't parse, that is an error at the line that asked for it, so an
+out-of-office can catch it.
+
+---
+
+## 7. Reply-all
+
+A `Cc:` line above the greeting lists people by name. `Replying all.` calls all of them at
+once, each on a separate thread, and waits for every one to sign off before moving on.
+`Replying all, re: <a>.` gives each of them the same `the ask`.
+
+```
+Subject: Q4 planning — please add your numbers
+Cc: Dave Okonkwo <dave@example.com>, Priya Raman <priya@example.com>
+```
+
+Replies share variables and nothing locks them. If two replies change the same variable,
+updates get lost, which is both the easiest implementation and the accurate one. In one run
+where Dave and Priya each added 1 to a shared counter 20,000 times, the counter finished at
+23,187. Lines printed by different people can also arrive in any order.
+
+When a reply fails, the program stops with that error after the other replies finish, unless
+an out-of-office around `Replying all.` catches it. A quoted message can carry its own `Cc:`
+line, which is the list for any `Replying all.` in that message.
+
+---
+
+## 8. Examples
 
 ### Hello World
 
@@ -307,9 +455,10 @@ Ihor
 
 ---
 
-## 6. Errors
+## 9. Errors
 
-Diagnostics are written in register. All errors stop the program with exit code 2.
+Diagnostics are written in register. An error that no out-of-office catches stops the program
+with exit code 2.
 
 ```
 warning: `Sent from my iPhone` present; optimizations disabled.
@@ -327,6 +476,14 @@ error: splitting across zero. That's not a realistic plan (line 5)
 
 error: this thread has too many replies. Let's set up a meeting (line 4)
 
+error: Dave signed off without a net-net. What's the takeaway? (line 4)
+
+error: `Net-net` in the original email. There's nobody to report back to (line 6)
+
+error: the attachment `finance.rgrd` didn't come through. Can you resend? (line 5)
+
+error: nobody is cc'd. Reply-all to whom? (line 7)
+
 error: no sign-off. The thread is still open.
 ```
 
@@ -334,20 +491,21 @@ The last one has no line number, because the problem is everything after the las
 
 ---
 
-## 7. Computational class
+## 10. Computational class
 
-`Regards,` is Turing complete.
+`Regards,` is Turing complete, because it can simulate a two-counter
+[Minsky machine](https://esolangs.org/wiki/Minsky_machine), and those are known to be
+Turing complete.
 
-Integers have no upper limit, and the language has a `while` loop, add one
-(`Good news — we've added another`), subtract one (`Quick flag: one … is now closed`) and a
-zero test (`is at zero`). That is enough to run a two-counter Minsky machine, which is a
-known Turing-complete model: two variables hold the counters, a third holds the machine's
-current state, and one `Per my last email, while` loop dispatches on that state with
-`If` / `That said, if`.
+Integers have no upper limit, so two variables can hold the counters.
+`Good news — we've added another` increments one and `Quick flag: one … is now closed`
+decrements it. A third variable holds the machine's current state. The program is a single
+`Per my last email, while` loop with an `If` / `That said, if` branch for each state, and a
+state that jumps on zero tests its counter with `is at zero` before setting the next state.
 
 ---
 
-## 8. Design decisions
+## 11. Design decisions
 
 ### Settled
 
@@ -357,6 +515,10 @@ current state, and one `Per my last email, while` loop dispatches on that state 
   being called, from the top. It does not target labels, because email has none.
 - **`Thanks in advance.` is a warning that cannot be suppressed.**
 - **Sign-offs carry exit codes.** Bare `Regards,` exits 1. Everything warmer exits 0.
+- **Passing an argument takes the call offline.** Recursion needs private variables, and a
+  plain call keeps sharing everything, so programs written before `re:` existed still work.
+- **Reply-all has no locking.** Replies share variables and updates can be lost. Nobody
+  coordinates a real reply-all either.
 
 ### Still open
 
@@ -366,25 +528,10 @@ current state, and one `Per my last email, while` loop dispatches on that state 
 
 ---
 
-## 9. Proposed extensions
+## 12. Implementation
 
-**None of this is part of the language.** These statements are not implemented, and the
-interpreter rejects them as unknown statements.
-
-| Idiom | Proposed semantics |
-|---|---|
-| `Net-net, <expr>.` | return a value from a person |
-| `As discussed, <Name>, re: <var>.` | call a person with an argument |
-| `Happy to take this offline.` | open a private (lexical) scope. Quote depth already gives blocks, so this needs a way to end that doesn't duplicate it. |
-| `Resending with the attachment.` | re-import the quoted thread |
-| `I am currently OOO, returning <date>.` | exception handler for the enclosing block |
-| a reply-all | `fork()`. Forks would share memory with last-write-wins and no synchronization, which is both the easiest implementation and the accurate one. Needs a syntax first, since a single file has no recipient list. |
-
----
-
-## 10. Implementation
-
-Reference interpreter in Python 3, tree-walking, no dependencies.
+The reference interpreter is a tree-walking interpreter written in Python 3. It has no
+dependencies.
 
 ```
 python3 regards.py examples/fizzbuzz.rgrd      # run a program
@@ -404,21 +551,27 @@ regards/
     fizzbuzz.rgrd
     factorial.rgrd
     dave.rgrd        calling a person from the quoted thread
+    forecast.rgrd    recursion with a net-net and the ask
+    ooo.rgrd         an auto-reply catching a division by zero
+    attachment.rgrd  calling Priya from finance.rgrd
+    finance.rgrd
+    reply_all.rgrd   Dave and Priya replying at once
   tests/
     test_regards.py
 ```
 
-Lexing is line-oriented: strip leading `>` to get the quote depth, then match the
-remaining text against the idiom table. Parsing is a straight indentation-to-tree
-transform over quote depth, identical to Python's INDENT/DEDENT handling. The interpreter
-is a walk over the resulting tree with a single environment and a call stack.
+The lexer works line by line. It counts the leading `>` markers to get the quote depth and
+matches the rest of the line against the idiom table. Quote depth then becomes a tree of
+blocks, much as Python turns indentation into INDENT and DEDENT tokens, and the interpreter
+walks that tree. Variables live in a stack of scopes, with the shared ones at the bottom and
+any offline ones above. Each reply to a reply-all runs on its own Python thread.
 
 The parser is the interesting part, and it is small. The idiom table is where the work is,
 and the idiom table is also the joke, so the work and the joke are the same work.
 
 ---
 
-## 11. License
+## 13. License
 
-`Regards,` — the specification, the interpreter, the examples and the tests — is dedicated to
-the public domain under [CC0 1.0](LICENSE). Copy it, fork it, paste it onto a wiki, reply-all.
+Everything in this repository, including this specification, is dedicated to the public
+domain under [CC0 1.0](LICENSE). Feel free to reply-all.

@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Reference interpreter for `Regards,` — a language written as a corporate email thread."""
 
+import os
 import re
 import sys
+import threading
 import time
 import traceback
 
@@ -11,6 +13,7 @@ SIGN_OFFS = {"best", "regards", "thanks", "cheers", "warm regards", "kind regard
 NONZERO_SIGN_OFFS = {"regards"}  # a bare "Regards," is not a happy exit
 GREETING = re.compile(r"^(hi|hello|hey|dear)\b.*,$", re.I)
 THREAD_HEADER = re.compile(r"^on .*wrote:$", re.I)
+CC_HEADER = re.compile(r"^cc:(.*)$", re.I)
 PRAGMA_IPHONE = re.compile(r"^sent from my iphone$", re.I)
 
 
@@ -24,6 +27,15 @@ class Bump(Exception):
 
 class SignOff(Exception):
     pass
+
+
+class NetNet(Exception):
+    """`Net-net, <expr>.` ends the current message and carries its value back to the caller."""
+
+    def __init__(self, value, line):
+        super().__init__(value)
+        self.value = value
+        self.line = line
 
 
 def fail(line, msg):
@@ -60,6 +72,16 @@ def var_key(name):
     return word
 
 
+def first_names(header):
+    """`Dave Okonkwo <dave@example.com>, Priya` -> ["dave", "priya"]"""
+    names = []
+    for entry in header.split(","):
+        words = re.sub(r"<[^>]*>", "", entry).split()
+        if words:
+            names.append(words[0].lower())
+    return names
+
+
 # ---------------------------------------------------------------- parsing
 
 def parse_message(lines, base):
@@ -68,7 +90,11 @@ def parse_message(lines, base):
     Returns (body_nodes, sign_off, people) where people maps first name -> body nodes.
     """
     i = 0
+    cc = []
     while i < len(lines) and not (lines[i][0] == base and GREETING.match(lines[i][1])):
+        header = CC_HEADER.match(lines[i][1]) if lines[i][0] == base else None
+        if header:
+            cc += first_names(header.group(1))
         i += 1
     if i == len(lines):
         fail(lines[0][2] if lines else None, "no greeting. Who is this addressed to?")
@@ -117,7 +143,12 @@ def parse_message(lines, base):
         elif base == 0:
             fail(n, f"unreachable code after `{sign_off.title()},`.\n"
                     "       Nothing below a sign-off is read. This is true of email generally.")
-    return build_tree(body, 0, 0)[0], sign_off, people
+
+    tree = build_tree(body, 0, 0)[0]
+    for node in walk(tree):
+        if node["kind"] == "reply_all":
+            node["cc"] = cc
+    return tree, sign_off, people
 
 
 def build_tree(items, i, depth):
@@ -138,11 +169,18 @@ def build_tree(items, i, depth):
     return nodes, i
 
 
+def walk(nodes):
+    for node in nodes:
+        yield node
+        yield from walk(node.get("body", []))
+
+
 NUM = r"-?\d+"
 V = r"[a-z][a-z' ]*?"
 
 EXPR_PATTERNS = [
     (rf"^what's left after splitting (?P<b>{V}) across (?P<a>.+)$", "mod"),
+    (r"^(?P<p>[a-z]+)'s take(?: on (?P<a>.+))?$", "take"),
     (rf"^(?P<n>{NUM})$", "num"),
     (rf"^(?P<v>{V})$", "var"),
 ]
@@ -156,8 +194,8 @@ COND_PATTERNS = [
 ]
 
 STATEMENT_PATTERNS = [
-    (rf"^just to level-set, we have (?P<x>{NUM}) (?P<v>{V})\.$", "set"),
-    (rf"^just to level-set, (?P<v>{V}) is (?P<x>.+)\.$", "set"),
+    (rf"^just to level-set, we have (?P<x>{NUM}) (?P<v>{V})\.$", "declare"),
+    (rf"^just to level-set, (?P<v>{V}) is (?P<x>.+)\.$", "declare"),
     (rf"^per the attached, (?P<v>{V}) is now (?P<x>.+)\.$", "set"),
     (rf"^(?P<v>{V}) is off the table\.$", "zero"),
     (rf"^good news - we've added another (?P<v>{V})\.$", "inc"),
@@ -173,7 +211,13 @@ STATEMENT_PATTERNS = [
     (r"^if (?P<c>.+):$", "if"),
     (r"^per my last email, while (?P<c>.+):$", "while"),
     (r"^bumping this\.$", "bump"),
+    (r"^as discussed, (?P<p>[a-z]+), re: (?P<x>.+)\.$", "call"),
     (r"^as discussed, (?P<p>[a-z]+)\.$", "call"),
+    (r"^net-net, (?P<x>.+)\.$", "net_net"),
+    (r"^happy to take this offline\.$", "offline"),
+    (r"^i(?: am|'m) currently ooo, returning (?P<d>.+):$", "ooo"),
+    (r"^resending with the attachment: (?P<f>.+)\.$", "attach"),
+    (r"^replying all(?:, re: (?P<x>.+))?\.$", "reply_all"),
     (r'^circling back on "(?P<s>.*)"\.$', "print_lit"),
     (rf"^circling back on (?P<x>.+)\.$", "print"),
     (r"^\+leadership for visibility\.$", "flush"),
@@ -191,6 +235,8 @@ def parse_expr(text, n):
             g = m.groupdict()
             if kind == "mod":
                 return ("mod", var_key(g["b"]), parse_expr(g["a"], n))
+            if kind == "take":
+                return ("take", g["p"].lower(), parse_expr(g["a"], n) if g["a"] else None)
             if kind == "num":
                 return ("num", int(g["n"]))
             return ("var", var_key(g["v"]))
@@ -222,6 +268,8 @@ def parse_statement(text, n):
             node["cond"] = parse_cond(g["c"], n)
         if g.get("p"):
             node["person"] = g["p"].lower()
+        if g.get("f"):
+            node["file"] = g["f"]
         if "s" in g:
             node["text"] = m.group("s")
         return node
@@ -231,20 +279,53 @@ def parse_statement(text, n):
 # ---------------------------------------------------------------- execution
 
 class Interpreter:
-    def __init__(self, people, stdin=sys.stdin, stdout=sys.stdout):
-        self.env = {}
+    def __init__(self, people, stdin=sys.stdin, stdout=sys.stdout, folder="."):
+        self.globals = {}
+        self.scopes = [self.globals]
         self.people = people
         self.stdin = stdin
         self.stdout = stdout
+        self.folder = folder
         self.last_var = None
         self.last_ok = True
         self.depth = 0
 
+    def fork(self):
+        """Another reader of the same thread: shared variables and people, its own call stack."""
+        child = Interpreter(self.people, self.stdin, self.stdout, self.folder)
+        child.globals = self.globals
+        child.scopes = [self.globals]
+        child.depth = self.depth
+        return child
+
+    def lookup(self, name):
+        for scope in reversed(self.scopes):
+            if name in scope:
+                return scope
+        return None
+
     def get(self, name, line):
-        if name not in self.env:
+        scope = self.lookup(name)
+        if scope is None:
             fail(line, f"nobody told me about `{name}`. Can you send it over?")
         self.last_var = name
-        return self.env[name]
+        return scope[name]
+
+    def declare(self, name, value):
+        self.scopes[-1][name] = value
+        self.last_var = name
+
+    def assign(self, name, value):
+        """Update the nearest variable with this name, or create it in the innermost scope."""
+        scope = self.lookup(name)
+        if scope is None:
+            scope = self.scopes[-1]
+        scope[name] = value
+        self.last_var = name
+
+    def say(self, text):
+        # one write per line, so people replying all at once can't split each other's lines
+        self.stdout.write(f"{text}\n")
 
     def eval(self, expr, line):
         kind = expr[0]
@@ -252,6 +333,12 @@ class Interpreter:
             return expr[1]
         if kind == "var":
             return self.get(expr[1], line)
+        if kind == "take":
+            _, person, arg = expr
+            value = self.call(person, arg, line)
+            if value is None:
+                fail(line, f"{person.title()} signed off without a net-net. What's the takeaway?")
+            return value
         divisor = self.eval(expr[2], line)
         if divisor == 0:
             fail(line, "splitting across zero. That's not a realistic plan")
@@ -273,6 +360,70 @@ class Interpreter:
             fail(line, "splitting across zero. That's not a realistic plan")
         return v % d == 0
 
+    def call(self, person, arg, line):
+        """Run a person's message. Returns their net-net, or None if they just signed off.
+
+        A person sees the shared variables but not the caller's offline ones. Calling with
+        `re:` takes the call offline: the person gets a private scope holding `the ask`.
+        """
+        body = self.people.get(person)
+        if body is None:
+            fail(line, f"{person.title()} isn't on this thread. Happy to resend")
+        if self.depth >= MAX_CALL_DEPTH:
+            fail(line, "this thread has too many replies. Let's set up a meeting")
+        scopes = [self.globals] if arg is None else [self.globals, {"ask": self.eval(arg, line)}]
+        saved, self.scopes = self.scopes, scopes
+        self.depth += 1
+        try:
+            self.run_message(body)
+            return None
+        except NetNet as reply:
+            return reply.value
+        finally:
+            self.scopes = saved
+            self.depth -= 1
+
+    def attach(self, name, line):
+        """Everyone quoted in the attached email becomes callable. Its own body never runs."""
+        try:
+            with open(os.path.join(self.folder, name), encoding="utf-8") as f:
+                source = f.read()
+        except (OSError, UnicodeDecodeError):
+            fail(line, f"the attachment `{name}` didn't come through. Can you resend?")
+        try:
+            _, _, people = parse_message(lex(source), 0)
+        except RegardsError as e:
+            fail(line, f"the attachment `{name}` is garbled: {str(e).removeprefix('error: ')}")
+        self.people.update(people)
+
+    def reply_all(self, node, line):
+        """Everyone on cc replies at once. They share variables and nobody coordinates."""
+        if not node["cc"]:
+            fail(line, "nobody is cc'd. Reply-all to whom?")
+        for person in node["cc"]:
+            if person not in self.people:
+                fail(line, f"{person.title()} isn't on this thread. Happy to resend")
+        arg = ("num", self.eval(node["expr"], line)) if "expr" in node else None
+        errors = []
+
+        def reply(fork, person):
+            try:
+                fork.call(person, arg, line)
+            except BaseException as e:
+                errors.append(e)
+
+        replies = [threading.Thread(target=reply, args=(self.fork(), person)) for person in node["cc"]]
+        old_size = threading.stack_size(THREAD_STACK_SIZE)
+        try:
+            for thread in replies:
+                thread.start()
+        finally:
+            threading.stack_size(old_size)
+        for thread in replies:
+            thread.join()
+        if errors:
+            raise errors[0]
+
     def run_message(self, nodes):
         """Bumping re-sends the whole message, so only a message catches Bump."""
         while True:
@@ -286,6 +437,19 @@ class Interpreter:
         i = 0
         while i < len(nodes):
             node = nodes[i]
+            if node["kind"] == "offline":
+                self.scopes.append({})
+                try:
+                    self.run_block(nodes[i + 1:])
+                finally:
+                    self.scopes.pop()
+                return
+            if node["kind"] == "ooo":
+                try:
+                    self.run_block(nodes[i + 1:])
+                except RegardsError:
+                    self.run_block(node["body"])
+                return
             if node["kind"] == "if":
                 chain = [node]
                 while i + 1 < len(nodes) and nodes[i + 1]["kind"] in ("elif", "else"):
@@ -306,41 +470,38 @@ class Interpreter:
     def execute(self, node):
         k, line = node["kind"], node["line"]
         var = node.get("var")
-        if k == "set":
-            self.env[var] = self.eval(node["expr"], line)
-            self.last_var = var
+        if k == "declare":
+            self.declare(var, self.eval(node["expr"], line))
+        elif k == "set":
+            self.assign(var, self.eval(node["expr"], line))
         elif k == "zero":
-            self.env[var] = 0
-            self.last_var = var
+            self.assign(var, 0)
         elif k in ("inc", "dec", "double", "halve"):
             v = self.get(var, line)
-            self.env[var] = {"inc": v + 1, "dec": v - 1, "double": v * 2, "halve": v // 2}[k]
+            self.assign(var, {"inc": v + 1, "dec": v - 1, "double": v * 2, "halve": v // 2}[k])
         elif k in ("add", "sub", "mul", "div"):
             a = self.eval(node["expr"], line)
             b = self.get(var, line)
             if k == "div" and a == 0:
                 fail(line, "splitting across zero. That's not a realistic plan")
-            self.env[var] = {"add": b + a, "sub": b - a, "mul": b * a, "div": b // a if a else 0}[k]
+            self.assign(var, {"add": b + a, "sub": b - a, "mul": b * a, "div": b // a if a else 0}[k])
         elif k == "while":
             while self.test(node["cond"], line):
                 self.run_block(node["body"])
         elif k == "bump":
             raise Bump()
         elif k == "call":
-            body = self.people.get(node["person"])
-            if body is None:
-                fail(line, f"{node['person'].title()} isn't on this thread. Happy to resend")
-            self.depth += 1
-            if self.depth > MAX_CALL_DEPTH:
-                fail(line, "this thread has too many replies. Let's set up a meeting")
-            try:
-                self.run_message(body)
-            finally:
-                self.depth -= 1
+            self.call(node["person"], node.get("expr"), line)
+        elif k == "net_net":
+            raise NetNet(self.eval(node["expr"], line), line)
+        elif k == "attach":
+            self.attach(node["file"], line)
+        elif k == "reply_all":
+            self.reply_all(node, line)
         elif k == "print_lit":
-            print(node["text"], file=self.stdout)
+            self.say(node["text"])
         elif k == "print":
-            print(self.eval(node["expr"], line), file=self.stdout)
+            self.say(self.eval(node["expr"], line))
         elif k == "flush":
             self.stdout.flush()
         elif k == "read":
@@ -348,7 +509,7 @@ class Interpreter:
                 fail(line, "asking for thoughts on nothing in particular")
             raw = self.stdin.readline()
             try:
-                self.env[self.last_var] = int(raw.strip())
+                self.assign(self.last_var, int(raw.strip()))
                 self.last_ok = True
             except ValueError:
                 self.last_ok = False
@@ -362,15 +523,23 @@ class Interpreter:
 MAX_CALL_DEPTH = 1000
 # Each nested call costs several Python frames, and more inside loops and ifs.
 PYTHON_RECURSION_LIMIT = 50_000
+# Replies run on their own threads, which get a small stack by default.
+THREAD_STACK_SIZE = 256 * 1024 * 1024
 
 
-def run(source, stdin=sys.stdin, stdout=sys.stdout):
-    """Run a program. Returns the process exit code."""
+def run(source, stdin=sys.stdin, stdout=sys.stdout, path=None):
+    """Run a program. Returns the process exit code.
+
+    `path` is where the program lives; attachments are looked for next to it.
+    """
+    folder = os.path.dirname(os.path.abspath(path)) if path else "."
     old_limit = sys.getrecursionlimit()
     sys.setrecursionlimit(max(old_limit, PYTHON_RECURSION_LIMIT))
     try:
         body, sign_off, people = parse_message(lex(source), 0)
-        Interpreter(people, stdin, stdout).run_message(body)
+        Interpreter(people, stdin, stdout, folder).run_message(body)
+    except NetNet as stray:
+        fail(stray.line, "`Net-net` in the original email. There's nobody to report back to")
     except RecursionError:
         raise RegardsError("error: this thread has too many replies. Let's set up a meeting") from None
     finally:
@@ -392,7 +561,7 @@ def main(argv):
         print(f"error: `{argv[1]}` isn't UTF-8 text. The attachment seems corrupted.", file=sys.stderr)
         return 2
     try:
-        return run(source)
+        return run(source, path=argv[1])
     except RegardsError as e:
         print(e, file=sys.stderr)
         return 2

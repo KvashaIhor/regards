@@ -415,3 +415,10 @@ is a walk over the resulting tree with a single environment and a call stack.
 
 The parser is the interesting part, and it is small. The idiom table is where the work is,
 and the idiom table is also the joke, so the work and the joke are the same work.
+
+---
+
+## 11. License
+
+`Regards,` — the specification, the interpreter, the examples and the tests — is dedicated to
+the public domain under [CC0 1.0](LICENSE). Copy it, fork it, paste it onto a wiki, reply-all.

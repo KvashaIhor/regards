@@ -2,10 +2,12 @@ import contextlib
 import io
 import pathlib
 import re
+import subprocess
 import sys
 import tempfile
 import time
 import unittest
+from email.message import EmailMessage
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -22,6 +24,26 @@ def run(source, stdin="", **options):
 def email(*body, sign_off="Best,", after="", cc=None):
     header = "Subject: test\n" + (f"Cc: {cc}\n" if cc else "")
     return header + "\nHi team,\n\n" + "\n".join(body) + f"\n\n{sign_off}\nIhor\n" + after
+
+
+def eml(body, html=None, cc=None, attachments=()):
+    """A saved email, as the bytes an email client would write to a .eml file."""
+    message = EmailMessage()
+    message["Subject"] = "Re: test"
+    message["From"] = "Ihor <ihor@example.com>"
+    message["To"] = "Team <team@example.com>"
+    if cc:
+        message["Cc"] = cc
+    if body is not None:
+        message.set_content(body)
+    if html is not None:
+        if body is None:
+            message.set_content(html, subtype="html")
+        else:
+            message.add_alternative(html, subtype="html")
+    for name, content in attachments:
+        message.add_attachment(content, filename=name)
+    return bytes(message)
 
 
 def person(name, *body, cc=None):
@@ -116,6 +138,20 @@ class Examples(unittest.TestCase):
         self.assertEqual(result, ("4\nall reqs filled\n", 0))
         self.assertEqual(err.getvalue().count("autocorrected"), 5)
 
+    def test_cat(self):
+        self.assertEqual(self.example("cat.rgrd", stdin="Hello,\nworld!\n"), ("Hello,\nworld!\n", 0))
+
+    def test_brainfuck_hello_world(self):
+        program = "++++++++[>++++[>++>+++>+++>+<<<<-]>+>+>->>+[<]<-]>>.>---.+++++++..+++.>>.<-.<.+++.------.--------.>>+.>++."
+        self.assertEqual(self.example("brainfuck.rgrd", stdin=program + "!"), ("Hello World!\n", 0))
+
+    def test_brainfuck_reads_its_own_input(self):
+        self.assertEqual(self.example("brainfuck.rgrd", stdin=",[.,]!office hours"), ("office hours", 0))
+
+    def test_saved_email(self):
+        source, attachments = regards.load_eml((ROOT / "examples" / "budget.eml").read_bytes())
+        self.assertEqual(run(source, attachments=attachments), ("250\n", 0))
+
 
 class Semantics(unittest.TestCase):
     def test_arithmetic(self):
@@ -183,6 +219,12 @@ class Semantics(unittest.TestCase):
         ), stdin="21\n")
         self.assertEqual(out, "42\n")
 
+    def test_were_at_is_equality(self):
+        out, _ = run(email("Just to level-set, x is 43.",
+                           "If we're at 43 on x:", '> Circling back on "yes".',
+                           "If we're at 44 on x:", '> Circling back on "no".'))
+        self.assertEqual(out, "yes\n")
+
     def test_bare_regards_exits_nonzero(self):
         self.assertEqual(run(email("Circling back on \"ok\".", sign_off="Regards,"))[1], 1)
         self.assertEqual(run(email("Circling back on \"ok\".", sign_off="Warm regards,"))[1], 0)
@@ -239,6 +281,11 @@ class CommandLine(unittest.TestCase):
             code = regards.main(["regards.py", *args])
         return code, err.getvalue()
 
+    def test_version(self):
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            code = regards.main(["regards.py", "--version"])
+        self.assertEqual((out.getvalue(), code), ("Regards, 1.0.0\n", 0))
+
     def test_missing_file_exits_2(self):
         code, err = self.main("nope.rgrd")
         self.assertEqual(code, 2)
@@ -250,6 +297,11 @@ class CommandLine(unittest.TestCase):
             code, err = self.main(d)
         self.assertEqual(code, 2)
         self.assertNotIn("Traceback", err)
+
+    def test_eml_files_run_from_the_command_line(self):
+        result = subprocess.run([sys.executable, str(ROOT / "regards.py"), str(ROOT / "examples" / "budget.eml")],
+                                capture_output=True, text=True)
+        self.assertEqual((result.stdout, result.returncode), ("250\n", 0))
 
     def test_binary_file_exits_2(self):
         with tempfile.NamedTemporaryFile("wb", suffix=".rgrd", delete=False) as f:
@@ -682,6 +734,124 @@ class HumanResources(ErrorCase):
 
     def test_no_hr_no_politeness_check(self):
         self.assertEqual(run(email('Circling back on "curt".'))[0], "curt\n")
+
+
+class Letters(ErrorCase):
+    def test_spelling_out_prints_a_character_without_a_newline(self):
+        out, _ = run(email("Let me spell 72 out.", "Let me spell out 105.", "Just to level-set, bang is 33.",
+                           "Let me spell it out."))
+        self.assertEqual(out, "Hi!")
+
+    def test_reading_between_the_lines_reads_one_character(self):
+        out, _ = run(email("Just to level-set, letter is 0.", "Reading between the lines.", "Circling back on letter.",
+                           "Reading between the lines.", "Circling back on letter."), stdin="A")
+        self.assertEqual(out, "65\n-1\n")
+
+    def test_spelling_out_a_negative_number(self):
+        self.assertError(email("Let me spell -1 out."), "isn't a letter")
+
+    def test_reading_with_nothing_mentioned(self):
+        self.assertError(email("Reading between the lines."), "nothing in particular")
+
+
+class OutlookThreads(ErrorCase):
+    REPLY = ("Hi Dave,\n\nAs discussed, Dave.\n\nBest,\nIhor\n\n"
+             "________________________________\n"
+             "From: Dave Okonkwo <dave@example.com>\n"
+             "Sent: Monday, September 7, 2026 9:00 AM\n"
+             "To: Ihor <ihor@example.com>\n"
+             "Subject: RE: deck\n\n"
+             "Hi Ihor,\n\n{dave}\n\nBest,\nDave\n")
+
+    def test_from_and_sent_blocks_define_people(self):
+        out, _ = run(self.REPLY.format(dave='Circling back on "the deck is attached".'))
+        self.assertEqual(out, "the deck is attached\n")
+
+    def test_older_messages_further_down_are_callable_too(self):
+        thread = self.REPLY.format(dave="As discussed, Priya.") + (
+            "\n-----Original Message-----\n"
+            "From: Raman, Priya <priya@example.com>\n"
+            "Date: Friday, September 4, 2026 5:00 PM\n"
+            "Subject: deck\n\n"
+            'Hi Dave,\n\nCircling back on "from the bottom of the thread".\n\nThanks,\nPriya\n')
+        self.assertEqual(run(thread)[0], "from the bottom of the thread\n")
+
+    def test_address_only_sender_and_cc_inside_the_block(self):
+        thread = ("Hi Dave,\n\nAs discussed, Dave.\n\nBest,\nIhor\n\n"
+                  "From: dave.okonkwo@example.com\n"
+                  "Sent: Monday, September 7, 2026 9:00 AM\n"
+                  "Cc: Priya Raman <priya@example.com>\n\n"
+                  "Hi Ihor,\n\nReplying all.\n\nBest,\nDave\n\n"
+                  "From: Priya Raman <priya@example.com>\n"
+                  "Sent: Friday, September 4, 2026 5:00 PM\n\n"
+                  'Hi Dave,\n\nCircling back on "priya replied".\n\nBest,\nPriya\n')
+        self.assertEqual(run(thread)[0], "priya replied\n")
+
+    def test_forwarded_message(self):
+        thread = ("Hi Dave,\n\nAs discussed, Priya.\n\nBest,\nIhor\n\n"
+                  "---------- Forwarded message ---------\n"
+                  "From: Priya Raman <priya@example.com>\n"
+                  "Date: Fri, Sep 4, 2026 at 5:00 PM\n"
+                  "Subject: numbers\n"
+                  "To: Ihor <ihor@example.com>\n\n"
+                  'Hi Ihor,\n\nCircling back on "forwarded".\n\nBest,\nPriya\n')
+        self.assertEqual(run(thread)[0], "forwarded\n")
+
+    def test_outlook_html_email(self):
+        html = ('<div>Hi Dave,</div><div>As discussed, Dave.</div><div>Best,<br>Ihor</div><hr>'
+                '<div style="border-top:solid #E1E1E1 1.0pt"><p><b>From:</b> Dave Okonkwo &lt;dave@example.com&gt;<br>'
+                '<b>Sent:</b> Monday, September 7, 2026 9:00 AM<br><b>To:</b> Ihor<br><b>Subject:</b> RE: deck</p></div>'
+                '<p>Hi Ihor,</p><p>Circling back on &quot;outlook html&quot;.</p><p>Best,<br>Dave</p>')
+        source, attachments = regards.load_eml(eml(None, html=html))
+        self.assertEqual(run(source, attachments=attachments)[0], "outlook html\n")
+
+    def test_a_from_line_without_headers_is_not_a_thread(self):
+        self.assertError("Hi team,\n\nFrom: the desk of Ihor\n\nBest,\nIhor\n", "isn't something I can action")
+
+
+class SavedEmails(ErrorCase):
+    BODY = "Hi team,\n\n{}\n\nBest,\nIhor\n"
+
+    def run_eml(self, data, stdin=""):
+        source, attachments = regards.load_eml(data)
+        return run(source, stdin=stdin, attachments=attachments)
+
+    def test_plain_text_email(self):
+        self.assertEqual(self.run_eml(eml(self.BODY.format('Circling back on "from a saved email".'))),
+                         ("from a saved email\n", 0))
+
+    def test_encoded_body_with_curly_quotes_and_dashes(self):
+        body = self.BODY.format("Just to level-set, x is 1.\nGood news — we’ve added another x.\nCircling back on x.")
+        self.assertEqual(self.run_eml(eml(body))[0], "2\n")
+
+    def test_cc_header_counts(self):
+        body = self.BODY.format('Circling back on "a".\nCircling back on "b".\nCircling back on "c".')
+        with self.assertRaises(regards.RegardsError) as ctx:
+            self.run_eml(eml(body, cc="HR <hr@example.com>"))
+        self.assertIn("too curt", str(ctx.exception))
+
+    def test_html_only_email_with_a_quoted_thread(self):
+        html = ('<html><head><style>div { color: red }</style></head><body>'
+                '<div>Hi team,</div><div><br></div><div>As discussed, <b>Dave</b>.</div><div><br></div>'
+                '<div>Best,<br>Ihor</div><br><div class="gmail_quote"><div>On Mon, 7 Sep 2026, Dave Okonkwo '
+                '&lt;dave@example.com&gt; wrote:<br></div><blockquote class="gmail_quote">'
+                '<div>Hi Ihor,</div><div>Circling back on &quot;from the blockquote&quot;.</div>'
+                '<div>Best,<br>Dave</div></blockquote></div></body></html>')
+        self.assertEqual(self.run_eml(eml(None, html=html))[0], "from the blockquote\n")
+
+    def test_attachments_inside_the_email(self):
+        finance = ("Hi all,\n\nCircling back on \"not me\".\n\nBest,\nPriya\n\n"
+                   "On Fri, 4 Sep 2026, Priya Raman <priya@example.com> wrote:\n> Hi team,\n> Net-net, 250.\n> Best,\n> Priya\n")
+        body = self.BODY.format("Resending with the attachment: finance.rgrd.\nCircling back on Priya's take.")
+        self.assertEqual(self.run_eml(eml(body, attachments=[("finance.rgrd", finance)]))[0], "250\n")
+
+    def test_email_with_no_text(self):
+        message = EmailMessage()
+        message["Subject"] = "see attached"
+        message.add_attachment(b"\x89PNG", maintype="image", subtype="png", filename="chart.png")
+        with self.assertRaises(regards.RegardsError) as ctx:
+            regards.load_eml(bytes(message))
+        self.assertIn("no text", str(ctx.exception))
 
 
 if __name__ == "__main__":

@@ -10,8 +10,13 @@ import threading
 import time
 import traceback
 from collections import deque
+from email import policy
+from email.parser import BytesParser
+from html.parser import HTMLParser
 
-SIGN_OFFS = {"best", "regards", "thanks", "cheers", "warm regards", "kind regards",
+__version__ = "1.0.0"
+
+SIGN_OFFS ={"best", "regards", "thanks", "cheers", "warm regards", "kind regards",
              "best regards", "many thanks", "sincerely"}
 NONZERO_SIGN_OFFS = {"regards"}  # a bare "Regards," is not a happy exit
 GREETING = re.compile(r"^(hi|hello|hey|dear)\b.*,$", re.I)
@@ -25,6 +30,9 @@ PLACEHOLDER = re.compile(r"\[([^\[\]]+)\]")
 PRONOUNS = {"it", "that"}
 PLEASANTRIES = {"pleasantry", "tia", "sleep"}
 HR = "hr"
+OUTLOOK_FROM = re.compile(r"^from:\s*(?P<who>.+)$", re.I)
+OUTLOOK_FIELD = re.compile(r"^(?P<field>sent|date|to|cc|bcc|subject|importance|reply-to):\s*(?P<value>.*)$", re.I)
+OUTLOOK_SEPARATOR = re.compile(r"^(_{5,}|[-\s]*(original|forwarded) message[-\s]*|begin forwarded message:)$", re.I)
 
 
 class RegardsError(Exception):
@@ -139,6 +147,128 @@ def expand_jargon(text, jargon, n):
         if not text.endswith((".", ",", "!", "?", ":")):
             text += m.group("end") or "."
     fail(n, "this jargon goes in circles. Can someone say it in plain English?")
+
+
+# ---------------------------------------------------------------- saved emails
+
+class HtmlText(HTMLParser):
+    """Just enough HTML-to-text for email: blocks become lines, blockquotes become `>` quoting."""
+
+    BLOCKS = {"p", "div", "li", "tr", "table", "h1", "h2", "h3", "h4", "h5", "h6", "pre", "hr"}
+    HIDDEN = {"head", "style", "script", "title"}
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.lines = [[0, ""]]
+        self.depth = 0
+        self.hidden = 0
+
+    def newline(self):
+        if self.lines[-1][1].strip():
+            self.lines.append([self.depth, ""])
+        else:
+            self.lines[-1][0] = self.depth
+
+    def handle_starttag(self, tag, attrs):
+        if tag in self.HIDDEN:
+            self.hidden += 1
+        elif tag == "blockquote":
+            self.depth += 1
+            self.newline()
+        elif tag == "br" or tag in self.BLOCKS:
+            self.newline()
+
+    def handle_endtag(self, tag):
+        if tag in self.HIDDEN:
+            self.hidden -= 1
+        elif tag == "blockquote":
+            self.depth -= 1
+            self.newline()
+        elif tag in self.BLOCKS:
+            self.newline()
+
+    def handle_data(self, data):
+        if not self.hidden:
+            self.lines[-1][1] += data
+
+    def text(self):
+        return "\n".join("> " * depth + " ".join(line.split()) for depth, line in self.lines if line.strip())
+
+
+def load_eml(data):
+    """A saved .eml file -> (program source, attachments by file name).
+
+    The plain-text part wins; an HTML-only email is flattened, keeping its quoted thread.
+    """
+    message = BytesParser(policy=policy.default).parsebytes(data)
+    body = message.get_body(preferencelist=("plain", "html"))
+    if body is None:
+        fail(None, "this email has no text in it. Was it all screenshots?")
+    text = body.get_content()
+    if body.get_content_type() == "text/html":
+        parser = HtmlText()
+        parser.feed(text)
+        parser.close()
+        text = parser.text()
+    headers = "".join(f"{name}: {message[name]}\n" for name in ("Subject", "Cc") if message[name])
+    attachments = {}
+    for part in message.iter_attachments():
+        name = part.get_filename()
+        if name:
+            content = part.get_content()
+            attachments[name] = content.decode("utf-8", "replace") if isinstance(content, bytes) else content
+    return headers + "\n" + text, attachments
+
+
+def sender_first_name(who):
+    """`Dave Okonkwo <dave@…>`, `Okonkwo, Dave` or `dave.okonkwo@example.com` -> `Dave`."""
+    name = re.sub(r"<[^>]*>", "", who).strip().strip('"').strip()
+    if "," in name:
+        name = name.split(",", 1)[1]
+    if not name.strip() or "@" in name:
+        address = re.search(r"[\w.+-]+(?=@)", who)
+        name = re.split(r"[._+-]", address.group(0))[0] if address else ""
+    words = name.split()
+    return words[0] if words else "Someone"
+
+
+def unfold_outlook(lines):
+    """Outlook doesn't quote replies with `>`. It stacks earlier messages under From:/Sent: blocks,
+    so each block becomes an `On …, <Name> wrote:` line and its message moves one level deeper."""
+    out = []
+    block_depth = None
+    i = 0
+    while i < len(lines):
+        depth, text, n = lines[i]
+        fields = []
+        if OUTLOOK_FROM.match(text):
+            j = i + 1
+            while j < len(lines) and lines[j][0] == depth and OUTLOOK_FIELD.match(lines[j][1]):
+                fields.append((lines[j][2], OUTLOOK_FIELD.match(lines[j][1])))
+                j += 1
+        if fields:
+            values = {field.group("field").lower(): field.group("value") for _, field in fields}
+            when = values.get("sent") or values.get("date") or "an earlier date"
+            who = sender_first_name(OUTLOOK_FROM.match(text).group("who"))
+            out.append((depth, f"On {when}, {who} wrote:", n))
+            for line, field in fields:
+                if field.group("field").lower() == "cc":
+                    out.append((depth + 1, f"Cc: {field.group('value')}", line))
+                else:
+                    out.append((depth, "", line))
+            block_depth = depth
+            i = j
+            continue
+        if block_depth is not None and text and depth < block_depth:
+            block_depth = None
+        if OUTLOOK_SEPARATOR.match(text):
+            out.append((depth, "", n))
+        elif block_depth is not None:
+            out.append((depth + 1, text, n))
+        else:
+            out.append((depth, text, n))
+        i += 1
+    return out
 
 
 # ---------------------------------------------------------------- parsing
@@ -273,6 +403,7 @@ COND_PATTERNS = [
     # greedy, so `we're under Dave's take on budget on sprint` splits at the last "on"
     (rf"^we're under (?P<x>.+) on (?P<v>{V})$", "lt"),
     (rf"^we're over (?P<x>.+) on (?P<v>{V})$", "gt"),
+    (rf"^we're at (?P<x>.+) on (?P<v>{V})$", "eq"),
 ]
 
 STATEMENT_PATTERNS = [
@@ -306,6 +437,9 @@ STATEMENT_PATTERNS = [
     (r"^resending with the attachment: (?P<f>.+)\.$", "attach"),
     (r"^replying all(?:, re: (?P<x>.+))?\.$", "reply_all"),
     (r"^blocking (?P<t>\d+) (?P<u>minutes?|hours?) for this\.$", "timebox"),
+    (r"^let me spell out (?P<x>.+)\.$", "spell"),
+    (r"^let me spell (?P<x>.+) out\.$", "spell"),
+    (r"^reading between the lines\.$", "read_letter"),
     (r'^circling back on "(?P<s>.*)"\.$', "print_lit"),
     (rf"^circling back on (?P<x>.+)\.$", "print"),
     (r"^\+leadership for visibility\.$", "flush"),
@@ -435,13 +569,14 @@ def match_statement(text, n):
 # ---------------------------------------------------------------- execution
 
 class Interpreter:
-    def __init__(self, people, stdin=sys.stdin, stdout=sys.stdout, folder=".", rng=None):
+    def __init__(self, people, stdin=sys.stdin, stdout=sys.stdout, folder=".", rng=None, attachments=None):
         self.globals = {}
         self.scopes = [self.globals]
         self.people = people
         self.stdin = stdin
         self.stdout = stdout
         self.folder = folder
+        self.attachments = attachments or {}
         self.rng = rng or random.Random()
         self.frozen = set()
         self.backlogs = {}
@@ -453,7 +588,7 @@ class Interpreter:
 
     def fork(self):
         """Another reader of the same thread: shared variables and people, its own call stack."""
-        child = Interpreter(self.people, self.stdin, self.stdout, self.folder, self.rng)
+        child = Interpreter(self.people, self.stdin, self.stdout, self.folder, self.rng, self.attachments)
         child.globals = self.globals
         child.scopes = [self.globals]
         child.frozen = self.frozen
@@ -563,6 +698,8 @@ class Interpreter:
             return v < self.eval(x, line)
         if kind == "gt":
             return v > self.eval(x, line)
+        if kind == "eq":
+            return v == self.eval(x, line)
         d = self.eval(x, line)
         if d == 0:
             fail(line, "splitting across zero. That's not a realistic plan")
@@ -592,14 +729,20 @@ class Interpreter:
             self.depth -= 1
 
     def attach(self, name, line):
-        """Everyone quoted in the attached email becomes callable. Its own body never runs."""
+        """Everyone quoted in the attached email becomes callable. Its own body never runs.
+
+        When the program is a saved .eml file, a real attachment of that name wins over the disk.
+        """
+        if name in self.attachments:
+            source = self.attachments[name]
+        else:
+            try:
+                with open(os.path.join(self.folder, name), encoding="utf-8") as f:
+                    source = f.read()
+            except (OSError, UnicodeDecodeError):
+                fail(line, f"the attachment `{name}` didn't come through. Can you resend?")
         try:
-            with open(os.path.join(self.folder, name), encoding="utf-8") as f:
-                source = f.read()
-        except (OSError, UnicodeDecodeError):
-            fail(line, f"the attachment `{name}` didn't come through. Can you resend?")
-        try:
-            _, _, people = parse_message(preprocess(lex(source)), 0)
+            _, _, people = parse_message(preprocess(unfold_outlook(lex(source))), 0)
         except RegardsError as e:
             fail(line, f"the attachment `{name}` is garbled: {str(e).removeprefix('error: ')}")
         self.people.update(people)
@@ -729,6 +872,16 @@ class Interpreter:
             self.reply_all(node, line)
         elif k == "timebox":
             self.meeting["seconds left"] = node["seconds"]
+        elif k == "spell":
+            code = self.eval(node["expr"], line)
+            if not 0 <= code <= 0x10FFFF:
+                fail(line, f"{code} isn't a letter, so there's nothing to spell out")
+            self.stdout.write(chr(code))
+        elif k == "read_letter":
+            if self.last_var is None:
+                fail(line, "reading between the lines of nothing in particular")
+            letter = self.stdin.read(1)
+            self.assign(self.last_var, ord(letter) if letter else -1, line)
         elif k == "print_lit":
             self.say(self.merge(node["text"]))
         elif k == "print":
@@ -759,7 +912,7 @@ PYTHON_RECURSION_LIMIT = 50_000
 THREAD_STACK_SIZE = 256 * 1024 * 1024
 
 
-def run(source, stdin=sys.stdin, stdout=sys.stdout, path=None, rng=None):
+def run(source, stdin=sys.stdin, stdout=sys.stdout, path=None, rng=None, attachments=None):
     """Run a program. Returns the process exit code.
 
     `path` is where the program lives; attachments are looked for next to it.
@@ -768,8 +921,8 @@ def run(source, stdin=sys.stdin, stdout=sys.stdout, path=None, rng=None):
     old_limit = sys.getrecursionlimit()
     sys.setrecursionlimit(max(old_limit, PYTHON_RECURSION_LIMIT))
     try:
-        body, sign_off, people = parse_message(preprocess(lex(source)), 0)
-        Interpreter(people, stdin, stdout, folder, rng).run_message(body)
+        body, sign_off, people = parse_message(preprocess(unfold_outlook(lex(source))), 0)
+        Interpreter(people, stdin, stdout, folder, rng, attachments).run_message(body)
     except NetNet as stray:
         fail(stray.line, "`Net-net` in the original email. There's nobody to report back to")
     except RecursionError:
@@ -780,20 +933,30 @@ def run(source, stdin=sys.stdin, stdout=sys.stdout, path=None, rng=None):
 
 
 def main(argv):
+    if argv[1:] == ["--version"]:
+        print(f"Regards, {__version__}")
+        return 0
     if len(argv) != 2:
-        print("usage: regards.py <program.rgrd>", file=sys.stderr)
+        print("usage: regards.py <program.rgrd | saved-email.eml | --version>", file=sys.stderr)
         return 2
+    path = argv[1]
+    saved_email = path.lower().endswith(".eml")
     try:
-        with open(argv[1], encoding="utf-8") as f:
-            source = f.read()
+        if saved_email:
+            with open(path, "rb") as f:
+                data = f.read()
+        else:
+            with open(path, encoding="utf-8") as f:
+                data = f.read()
     except OSError as e:
-        print(f"error: couldn't open `{argv[1]}` ({e.strerror}). Can you reattach?", file=sys.stderr)
+        print(f"error: couldn't open `{path}` ({e.strerror}). Can you reattach?", file=sys.stderr)
         return 2
     except UnicodeDecodeError:
-        print(f"error: `{argv[1]}` isn't UTF-8 text. The attachment seems corrupted.", file=sys.stderr)
+        print(f"error: `{path}` isn't UTF-8 text. The attachment seems corrupted.", file=sys.stderr)
         return 2
     try:
-        return run(source, path=argv[1])
+        source, attachments = load_eml(data) if saved_email else (data, {})
+        return run(source, path=path, attachments=attachments)
     except RegardsError as e:
         print(e, file=sys.stderr)
         return 2

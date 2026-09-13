@@ -31,6 +31,10 @@ Output:
 
 Run it with `python3 regards.py examples/countdown.rgrd`.
 
+This is `Regards,` 1.0. Programs written for 1.0 will keep running on every 1.x version, and
+anything that would break them waits for 2.0. The [changelog](CHANGELOG.md) lists what's in
+each version.
+
 ---
 
 ## 1. Why email
@@ -184,6 +188,7 @@ and nobody can tell you in advance which one.
 | `<var> is at zero` | `var == 0` |
 | `we're under <n> on <var>` | `var < n` |
 | `we're over <n> on <var>` | `var > n` |
+| `we're at <n> on <var>` | `var == n` |
 | `there's nothing left after splitting <var> across <n>` | `var % n == 0` |
 
 ### Control flow
@@ -217,6 +222,8 @@ setup in the caller and your bump in the person.
 | `Circling back on "<literal>".` | print literal, filling in `[placeholders]` |
 | `+Leadership for visibility.` | flush stdout |
 | `Thoughts?` / `Please advise.` | read a value into the last-mentioned variable |
+| `Let me spell <a> out.` / `Let me spell out <a>.` | print the character with code `a`, no newline |
+| `Reading between the lines.` | read one character's code into the last-mentioned variable, or -1 at the end of input |
 
 Literals work like a mail merge. Each `[placeholder]` is filled from the variable of that
 name, and one that doesn't match any variable goes out exactly as typed:
@@ -227,6 +234,11 @@ Circling back on "Hi [First Name], we have [reqs] open reqs".
 
 With `reqs` at 3 and no variable called `name`, that prints
 `Hi [First Name], we have 3 open reqs`.
+
+`Let me spell it out.` is the passive-aggressive way to print one character. Together with
+`Reading between the lines.` it is enough for a
+[cat program](https://esolangs.org/wiki/Cat_program) and a Brainfuck interpreter, both in
+section 12.
 
 ### Meta and pragmas
 
@@ -492,7 +504,35 @@ because HR never replies.
 
 ---
 
-## 11. Examples
+## 11. Saved emails
+
+```
+python3 regards.py examples/budget.eml
+```
+
+A program can be a real email saved as an `.eml` file, which is what Gmail's "Download
+message" gives you. Email encodings are decoded first, and the `Subject:` and `Cc:` headers
+count, so reply-all and HR politeness work as usual.
+
+The plain-text version of the email is used when there is one. An HTML-only email is
+flattened to text, and its quoted replies (`<blockquote>`, which is how Gmail quotes) become
+`>` quoting, so the thread below the signature still defines people.
+
+`Resending with the attachment: finance.rgrd.` looks inside the email before it looks on
+disk. If a file called `finance.rgrd` is attached, that is the one it reads, so a thread with
+its attachments is self-contained. `examples/budget.eml` is one of those: it attaches
+`finance.rgrd`, cc's HR, and prints 250.
+
+Outlook doesn't quote replies with `>`. It stacks earlier messages under `From:`, `Sent:`, `To:`
+and `Subject:` lines instead, and that works too, in any program: each header block counts as
+`On …, <Name> wrote:`, and the message under it counts as quoted. Forwarded messages work the
+same way. The sender can be written `Dave Okonkwo <dave@example.com>`, `Okonkwo, Dave` or just
+`dave.okonkwo@example.com`, and in every case the person is Dave. A `Cc:` line in the block is
+the cc list for that message.
+
+---
+
+## 12. Examples
 
 ### Hello World
 
@@ -720,9 +760,122 @@ Ihor
 Sent from my iPhone
 ```
 
+### Cat program
+
+Everything that comes in goes back out, exactly as received.
+
+```
+Subject: Fwd: Fwd: Fwd: FW: read this
+
+Hi all,
+
+FYI, forwarding this exactly as I received it.
+
+Just to level-set, letter is 0.
+Reading between the lines.
+
+Per my last email, while we're over -1 on letter:
+> Let me spell it out.
+> Reading between the lines.
+
+Best,
+Ihor
+```
+
+### Brainfuck interpreter
+
+Send it a Brainfuck program, then a `!`, then whatever the program should read:
+
+```
+printf '%s!' '++++++++[>++++[>++>+++>+++>+<<<<-]>+>+>->>+[<]<-]>>.>---.+++++++..+++.>>.<-.<.+++.------.--------.>>+.>++.' \
+  | python3 regards.py examples/brainfuck.rgrd
+```
+
+The program sits in two backlogs used as stacks, one for what's ahead and one for what's
+behind, and the tape is two more. Cells wrap at 256, and reading past the end of the input
+gives 0.
+
+```
+Subject: Re: Fwd: Brainfuck — can someone from IT take a look?
+
+Hi IT,
+
+FYI, send the Brainfuck program first, then a !, then whatever it should read.
+FYI, the program sits in two backlogs, what's ahead and what's behind. So does the tape.
+
+Just to level-set, letter is 0.
+Reading between the lines.
+Per my last email, while we're over -1 on letter:
+> If we're at 33 on letter:
+> > Per the attached, letter is now -1.
+> That said:
+> > Adding letter to the intake backlog.
+> > Reading between the lines.
+
+Per my last email, while we still have an intake backlog:
+> Picking up the most urgent intake backlog item as instruction.
+> Adding instruction to the ahead backlog.
+
+Just to level-set, cell is 0.
+
+Per my last email, while we still have an ahead backlog:
+> Picking up the most urgent ahead backlog item as instruction.
+> Adding instruction to the behind backlog.
+> If we're at 43 on instruction:
+> > Good news — we've added another cell.
+> > If we're at 256 on cell:
+> > > cell is off the table.
+> That said, if we're at 45 on instruction:
+> > Quick flag: one cell is now closed.
+> > If we're at -1 on cell:
+> > > Per the attached, cell is now 255.
+> That said, if we're at 62 on instruction:
+> > Adding cell to the left backlog.
+> > cell is off the table.
+> > If we still have a right backlog:
+> > > Picking up the most urgent right backlog item as cell.
+> That said, if we're at 60 on instruction:
+> > Adding cell to the right backlog.
+> > cell is off the table.
+> > If we still have a left backlog:
+> > > Picking up the most urgent left backlog item as cell.
+> That said, if we're at 46 on instruction:
+> > Let me spell cell out.
+> That said, if we're at 44 on instruction:
+> > cell is off the table.
+> > Reading between the lines.
+> > If we're at -1 on cell:
+> > > cell is off the table.
+> That said, if we're at 91 on instruction:
+> > If cell is at zero:
+> > > Just to level-set, we have 1 layers.
+> > > Per my last email, while we still have layers:
+> > > > Picking up the most urgent ahead backlog item as instruction.
+> > > > Adding instruction to the behind backlog.
+> > > > If we're at 91 on instruction:
+> > > > > Good news — we've added another layer.
+> > > > That said, if we're at 93 on instruction:
+> > > > > Quick flag: one layer is now closed.
+> That said, if we're at 93 on instruction:
+> > If we still have cell:
+> > > Picking up the most urgent behind backlog item as instruction.
+> > > Adding instruction to the ahead backlog.
+> > > Just to level-set, we have 1 layers.
+> > > Per my last email, while we still have layers:
+> > > > Picking up the most urgent behind backlog item as instruction.
+> > > > Adding instruction to the ahead backlog.
+> > > > If we're at 93 on instruction:
+> > > > > Good news — we've added another layer.
+> > > > That said, if we're at 91 on instruction:
+> > > > > Quick flag: one layer is now closed.
+
+Best,
+IT
+```
+
 ---
 
-## 12. Errors
+## 13. Errors
 
 Diagnostics are written in register. An error that no out-of-office catches stops the program
 with exit code 2.
@@ -765,6 +918,12 @@ error: not sure what `it` refers to. Can you be more specific? (line 5)
 
 error: this jargon goes in circles. Can someone say it in plain English? (line 7)
 
+error: -1 isn't a letter, so there's nothing to spell out (line 5)
+
+error: reading between the lines of nothing in particular (line 5)
+
+error: this email has no text in it. Was it all screenshots?
+
 error: no sign-off. The thread is still open.
 ```
 
@@ -772,7 +931,7 @@ The last one has no line number, because the problem is everything after the las
 
 ---
 
-## 13. Computational class
+## 14. Computational class
 
 `Regards,` is Turing complete, because it can simulate a two-counter
 [Minsky machine](https://esolangs.org/wiki/Minsky_machine), and those are known to be
@@ -784,9 +943,12 @@ decrements it. A third variable holds the machine's current state. The program i
 `Per my last email, while` loop with an `If` / `That said, if` branch for each state, and a
 state that jumps on zero tests its counter with `is at zero` before setting the next state.
 
+The Brainfuck interpreter in section 12 is a more direct demonstration: Brainfuck with an
+unbounded tape is Turing complete, and the backlogs holding the tape have no size limit.
+
 ---
 
-## 14. Design decisions
+## 15. Design decisions
 
 ### Settled
 
@@ -805,6 +967,8 @@ state that jumps on zero tests its counter with `is at zero` before setting the 
   optimizations to disable, and excusing typos is what that signature is for anyway.
 - **Politeness is only checked when HR is cc'd.** Otherwise every two-line email would need
   a pleasantry, and nobody writes those unless someone is watching.
+- **`we're at` joined `we're under` and `we're over`.** Writing the Brainfuck interpreter
+  showed that the language had no equality test, and the phrase for one was already there.
 
 ### Still open
 
@@ -812,13 +976,15 @@ Nothing right now. Suggestions are welcome, ideally without a meeting.
 
 ---
 
-## 15. Implementation
+## 16. Implementation
 
 The reference interpreter is a tree-walking interpreter written in Python 3. It has no
 dependencies.
 
 ```
 python3 regards.py examples/fizzbuzz.rgrd      # run a program
+python3 regards.py examples/budget.eml         # run a saved email
+python3 regards.py --version                   # prints Regards, 1.0.0
 python3 -m unittest discover -s tests          # run the tests
 ```
 
@@ -828,6 +994,7 @@ Exit codes: 0 for a warm sign-off, 1 for a bare `Regards,`, 2 for an error in th
 ```
 regards/
   README.md              this file
+  CHANGELOG.md           what's in each version
   LICENSE                CC0 1.0
   regards.py             lexer, parser, interpreter
   examples/
@@ -846,11 +1013,15 @@ regards/
     unread.rgrd          99 bottles of beer, as 99 unread emails
     planning_poker.rgrd  random estimates for a backlog of stories
     typos.rgrd           five typos, fixed by Sent from my iPhone
+    cat.rgrd             a cat program: input goes straight back out
+    brainfuck.rgrd       a Brainfuck interpreter
+    budget.eml           a saved email with an attachment, cc'ing HR
   tests/
     test_regards.py
 ```
 
-The lexer works line by line. It counts the leading `>` markers to get the quote depth and
+A saved `.eml` file is turned into plain text first, with Python's own `email` package. The
+lexer then works line by line. It counts the leading `>` markers to get the quote depth and
 matches the rest of the line against the idiom table, after dropping FYI lines and expanding
 jargon. Quote depth then becomes a tree of
 blocks, much as Python turns indentation into INDENT and DEDENT tokens, and the interpreter
@@ -862,7 +1033,7 @@ and the idiom table is also the joke, so the work and the joke are the same work
 
 ---
 
-## 16. License
+## 17. License
 
 Everything in this repository, including this specification, is dedicated to the public
 domain under [CC0 1.0](LICENSE). Feel free to reply-all.

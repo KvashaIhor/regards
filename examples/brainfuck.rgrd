@@ -1,0 +1,75 @@
+Subject: Re: Fwd: Brainfuck — can someone from IT take a look?
+
+Hi IT,
+
+FYI, send the Brainfuck program first, then a !, then whatever it should read.
+FYI, the program sits in two backlogs, what's ahead and what's behind. So does the tape.
+
+Just to level-set, letter is 0.
+Reading between the lines.
+Per my last email, while we're over -1 on letter:
+> If we're at 33 on letter:
+> > Per the attached, letter is now -1.
+> That said:
+> > Adding letter to the intake backlog.
+> > Reading between the lines.
+
+Per my last email, while we still have an intake backlog:
+> Picking up the most urgent intake backlog item as instruction.
+> Adding instruction to the ahead backlog.
+
+Just to level-set, cell is 0.
+
+Per my last email, while we still have an ahead backlog:
+> Picking up the most urgent ahead backlog item as instruction.
+> Adding instruction to the behind backlog.
+> If we're at 43 on instruction:
+> > Good news — we've added another cell.
+> > If we're at 256 on cell:
+> > > cell is off the table.
+> That said, if we're at 45 on instruction:
+> > Quick flag: one cell is now closed.
+> > If we're at -1 on cell:
+> > > Per the attached, cell is now 255.
+> That said, if we're at 62 on instruction:
+> > Adding cell to the left backlog.
+> > cell is off the table.
+> > If we still have a right backlog:
+> > > Picking up the most urgent right backlog item as cell.
+> That said, if we're at 60 on instruction:
+> > Adding cell to the right backlog.
+> > cell is off the table.
+> > If we still have a left backlog:
+> > > Picking up the most urgent left backlog item as cell.
+> That said, if we're at 46 on instruction:
+> > Let me spell cell out.
+> That said, if we're at 44 on instruction:
+> > cell is off the table.
+> > Reading between the lines.
+> > If we're at -1 on cell:
+> > > cell is off the table.
+> That said, if we're at 91 on instruction:
+> > If cell is at zero:
+> > > Just to level-set, we have 1 layers.
+> > > Per my last email, while we still have layers:
+> > > > Picking up the most urgent ahead backlog item as instruction.
+> > > > Adding instruction to the behind backlog.
+> > > > If we're at 91 on instruction:
+> > > > > Good news — we've added another layer.
+> > > > That said, if we're at 93 on instruction:
+> > > > > Quick flag: one layer is now closed.
+> That said, if we're at 93 on instruction:
+> > If we still have cell:
+> > > Picking up the most urgent behind backlog item as instruction.
+> > > Adding instruction to the ahead backlog.
+> > > Just to level-set, we have 1 layers.
+> > > Per my last email, while we still have layers:
+> > > > Picking up the most urgent behind backlog item as instruction.
+> > > > Adding instruction to the ahead backlog.
+> > > > If we're at 93 on instruction:
+> > > > > Good news — we've added another layer.
+> > > > That said, if we're at 91 on instruction:
+> > > > > Quick flag: one layer is now closed.
+
+Best,
+IT

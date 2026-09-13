@@ -25,6 +25,13 @@ The interpreter is one file, `regards.py`, with no dependencies. It needs Python
 Put it in `examples/`, add a test for its output to the `Examples` class, and list it in the
 README's file tree.
 
+## Releasing
+
+1. Bump `__version__` in `regards.py` and add a section to `CHANGELOG.md`.
+2. Commit, then publish a GitHub release tagged `v` plus the version, for example `v1.0.1`.
+3. The `publish` workflow checks that the tag matches the version, builds the package and
+   uploads it to PyPI.
+
 ## Reporting a bug
 
 Open an issue with the program, or the saved `.eml` file, and what you expected it to print. A

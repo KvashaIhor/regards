@@ -8,6 +8,7 @@ import tempfile
 import time
 import unittest
 from email.message import EmailMessage
+from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -284,7 +285,13 @@ class CommandLine(unittest.TestCase):
     def test_version(self):
         with contextlib.redirect_stdout(io.StringIO()) as out:
             code = regards.main(["regards.py", "--version"])
-        self.assertEqual((out.getvalue(), code), ("Regards, 1.0.0\n", 0))
+        self.assertEqual((out.getvalue(), code), ("Regards, 1.0.1\n", 0))
+
+    def test_installed_command_exits_with_mains_exit_code(self):
+        with contextlib.redirect_stdout(io.StringIO()) as out, mock.patch.object(sys, "argv", ["regards", "--version"]):
+            with self.assertRaises(SystemExit) as ctx:
+                regards.cli()
+        self.assertEqual((ctx.exception.code, out.getvalue()), (0, "Regards, 1.0.1\n"))
 
     def test_missing_file_exits_2(self):
         code, err = self.main("nope.rgrd")

@@ -31,11 +31,14 @@ Output:
 1
 ```
 
-Run it with `python3 regards.py examples/countdown.rgrd`.
+Run it with `python3 regards.py examples/countdown.rgrd`. Or install it with
+`pip install regards`, which gives you a `regards` command for any `.rgrd` program or saved
+`.eml` email. Either way it needs Python 3.9 or newer and nothing else.
 
 This is `Regards,` 1.0. Programs written for 1.0 will keep running on every 1.x version, and
-anything that would break them waits for 2.0. The [changelog](CHANGELOG.md) lists what's in
-each version.
+anything that would break them waits for 2.0. The
+[changelog](https://github.com/KvashaIhor/regards/blob/main/CHANGELOG.md) lists what's in each
+version.
 
 ---
 
@@ -986,7 +989,8 @@ or newer and nothing else.
 ```
 python3 regards.py examples/fizzbuzz.rgrd      # run a program
 python3 regards.py examples/budget.eml         # run a saved email
-python3 regards.py --version                   # prints Regards, 1.0.0
+python3 regards.py --version                   # prints the version
+pip install regards                            # installs the same thing as a `regards` command
 python3 -m unittest discover -s tests          # run the tests
 ```
 
@@ -1039,4 +1043,5 @@ and the idiom table is also the joke, so the work and the joke are the same work
 ## 17. License
 
 Everything in this repository, including this specification, is dedicated to the public
-domain under [CC0 1.0](LICENSE). Feel free to reply-all.
+domain under [CC0 1.0](https://github.com/KvashaIhor/regards/blob/main/LICENSE). Feel free to
+reply-all.

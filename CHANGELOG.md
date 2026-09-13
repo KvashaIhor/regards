@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.1 (2026-09-13)
+
+- Installable with `pip install regards`, which adds a `regards` command
+- No changes to the language
+
 ## 1.0.0 (2026-09-12)
 
 The first stable version. Later 1.x versions may add features, but they won't break programs

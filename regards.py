@@ -14,7 +14,7 @@ from email import policy
 from email.parser import BytesParser
 from html.parser import HTMLParser
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 SIGN_OFFS ={"best", "regards", "thanks", "cheers", "warm regards", "kind regards",
              "best regards", "many thanks", "sincerely"}
@@ -966,5 +966,10 @@ def main(argv):
         return 3
 
 
-if __name__ == "__main__":
+def cli():
+    """The `regards` command installed by pip."""
     sys.exit(main(sys.argv))
+
+
+if __name__ == "__main__":
+    cli()

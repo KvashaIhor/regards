@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "regards"
+dynamic = ["version"]
+description = "An esoteric programming language whose source code is a passive-aggressive corporate email thread."
+readme = "README.md"
+requires-python = ">=3.9"
+license = "CC0-1.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Ihor Kvasha" }]
+keywords = ["esolang", "esoteric programming language", "email", "interpreter", "humor"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Communications :: Email",
+    "Topic :: Software Development :: Interpreters",
+]
+
+[project.urls]
+Homepage = "https://github.com/KvashaIhor/regards"
+Changelog = "https://github.com/KvashaIhor/regards/blob/main/CHANGELOG.md"
+Issues = "https://github.com/KvashaIhor/regards/issues"
+
+[project.scripts]
+regards = "regards:cli"
+
+[tool.setuptools]
+py-modules = ["regards"]
+
+[tool.setuptools.dynamic]
+version = { attr = "regards.__version__" }

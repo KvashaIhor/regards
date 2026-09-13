@@ -25,6 +25,21 @@ The interpreter is one file, `regards.py`, with no dependencies. It needs Python
 Put it in `examples/`, add a test for its output to the `Examples` class, and list it in the
 README's file tree.
 
+## The playground
+
+The web playground lives in `playground/` and is the only part that needs a dependency, Flask:
+
+```
+python3 -m venv .venv
+.venv/bin/pip install -r playground/requirements.txt
+.venv/bin/python -m unittest discover -s playground/tests
+.venv/bin/flask --app playground/app run --port 8321
+```
+
+To deploy it, run `python3 playground/build_vercel.py`, then `vercel deploy --prod` from
+`build/vercel`. Vercel deploys from that folder because it would otherwise install
+dependencies from the package's `pyproject.toml`, which has none.
+
 ## Releasing
 
 1. Bump `__version__` in `regards.py` and add a section to `CHANGELOG.md`.

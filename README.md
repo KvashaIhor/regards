@@ -4,6 +4,8 @@
 
 An esoteric programming language whose source code is a passive-aggressive corporate email thread.
 
+**Try it in your browser: [Does your email compile?](https://regards-pearl.vercel.app)**
+
 ```
 Subject: Q3 headcount — quick sync?
 
@@ -1025,6 +1027,13 @@ regards/
     budget.eml           a saved email with an attachment, cc'ing HR
   tests/
     test_regards.py
+  playground/            the web playground at regards-pearl.vercel.app
+    app.py               Flask routes
+    sandbox.py           runs each program in its own process, with a time limit
+    runner.py            what runs inside that process
+    templates/ static/   the page
+    build_vercel.py      assembles the folder that Vercel deploys
+    tests/
 ```
 
 A saved `.eml` file is turned into plain text first, with Python's own `email` package. The
@@ -1037,6 +1046,22 @@ any offline ones above. Each reply to a reply-all runs on its own Python thread.
 
 The parser is the interesting part, and it is small. The idiom table is where the work is,
 and the idiom table is also the joke, so the work and the joke are the same work.
+
+### Playground
+
+[regards-pearl.vercel.app](https://regards-pearl.vercel.app) is a small Flask app in
+`playground/`. Every program runs in a separate process that gets 5 seconds, 100,000
+characters of output and 1 GB of memory where the operating system allows a limit.
+`Resending with the attachment:` only reads files attached inside an uploaded email, never
+files on the server.
+
+```
+python3 -m venv .venv
+.venv/bin/pip install -r playground/requirements.txt
+.venv/bin/flask --app playground/app run --port 8321     # http://127.0.0.1:8321
+python3 playground/build_vercel.py                         # then, from build/vercel:
+vercel deploy --prod
+```
 
 ---
 

@@ -72,8 +72,9 @@ Hi <name>,                           ← entry point (Hello, Hey and Dear work t
 
 Best,                                ← HALT
 Ihor                                 ← ignored
+P.S. …                               ← also ignored (optional)
 
-Sent from my iPhone                  ← pragma (optional)
+Sent from my iPhone                  ← turns on autocorrect (optional)
 
 On Tue, 8 Sep 2026, Priya Raman <priya@…> wrote:
 > <the quoted thread below the signature is the standard library>
@@ -91,9 +92,9 @@ Three regions, in order:
 That last one is the part I like most: the history you keep dragging along below your
 signature is the library you are importing, and nobody ever reads it.
 
-Below the sign-off, only three things are allowed: the signature name, the
+Below the sign-off, only four things are allowed: the signature name, `P.S.` lines, the
 `Sent from my iPhone` pragma, and `On …, <Name> wrote:` blocks. Anything else is
-unreachable code and an error.
+unreachable code and an error. Nobody reads a P.S., so the interpreter doesn't either.
 
 ### Quote depth inside the thread
 
@@ -127,12 +128,19 @@ nouns.
 Words of three letters or fewer, and words ending in `ss`, keep their `s`, so `gas` and
 `business` stay as they are.
 
+`it` and `that` stand for whichever variable was mentioned last before the current
+statement, so `Doubling down on it.` right after `Just to level-set, budget is 5.` doubles
+the budget.
+
 Numbers are integers with no upper limit. Halving and splitting round down, toward
 negative infinity.
 
 Wherever a table below says `<n>`, `<a>` or `<expr>`, you can write a number, a variable,
 `what's left after splitting …`, or someone's take (section 4). The one exception is
 `Just to level-set, we have <n> <var>.`, where `<n>` has to be a plain number.
+
+The backlog has its own statements in section 8, and you can add phrases of your own with
+jargon (section 9).
 
 ### Declaration and assignment
 
@@ -144,6 +152,8 @@ Wherever a table below says `<n>`, `<a>` or `<expr>`, you can write a number, a 
 | `Per the attached, <var> is now <expr>.` | reassign |
 | `<var> is off the table.` | `var = 0` |
 | `Happy to take this offline.` | variables declared from here to the end of the block are private |
+| `We have a hiring freeze on <var>.` | writes to `var` silently do nothing from here on |
+| `The freeze on <var> is lifted.` | writes to `var` work again |
 
 ### Arithmetic
 
@@ -158,9 +168,13 @@ Wherever a table below says `<n>`, `<a>` or `<expr>`, you can write a number, a 
 | `Scaling <b> by <a>.` | `b *= a` |
 | `Splitting <b> across <a>.` | `b //= a` |
 | `what's left after splitting <b> across <a>` | `b % a` (expression) |
+| `somewhere between <a> and <b>` | a random integer from `a` to `b`, both included (expression) |
 
 `what's left after splitting X across Y` being exactly modulo, in unmodified corporate
 English, is the single best argument for this language existing.
+
+`somewhere between 3 and 8` is also how estimates work: you get a whole number in that range,
+and nobody can tell you in advance which one.
 
 ### Conditions
 
@@ -189,6 +203,7 @@ English, is the single best argument for this language existing.
 | `I am currently OOO, returning <date>:` | error handler for the rest of the block |
 | `Resending with the attachment: <file>.` | import the people quoted in another program |
 | `Replying all.` / `Replying all, re: <a>.` | call everyone on the `Cc:` line at once |
+| `Going forward, "<phrase>" means "<statement>".` | define jargon (section 9) |
 
 `Bumping this.` does not remember anything about the first attempt. Variables keep their
 values, but every statement runs again, including the ones that set them up. Put your
@@ -199,9 +214,19 @@ setup in the caller and your bump in the person.
 | Idiom | Semantics |
 |---|---|
 | `Circling back on <var>.` | print `var` (or any expression), then a newline |
-| `Circling back on "<literal>".` | print literal |
+| `Circling back on "<literal>".` | print literal, filling in `[placeholders]` |
 | `+Leadership for visibility.` | flush stdout |
 | `Thoughts?` / `Please advise.` | read a value into the last-mentioned variable |
+
+Literals work like a mail merge. Each `[placeholder]` is filled from the variable of that
+name, and one that doesn't match any variable goes out exactly as typed:
+
+```
+Circling back on "Hi [First Name], we have [reqs] open reqs".
+```
+
+With `reqs` at 3 and no variable called `name`, that prints
+`Hi [First Name], we have 3 open reqs`.
 
 ### Meta and pragmas
 
@@ -209,9 +234,12 @@ setup in the caller and your bump in the person.
 |---|---|
 | `Best,` / `Thanks,` / `Cheers,` / `Warm regards,` / `Kind regards,` / `Best regards,` / `Many thanks,` / `Sincerely,` | **HALT**, exit 0 |
 | `Regards,` | **HALT**, exit 1 |
-| `Sent from my iPhone` | disable all optimizations (there aren't any) |
+| `Sent from my iPhone` | disable all optimizations (there aren't any) and turn on autocorrect |
 | `Sorry for the delay!` | sleep 1s |
 | `Thanks in advance.` | warn if the previous `Thoughts?` didn't get a number back |
+| `Hope you're well.`, `Thanks!` and other pleasantries | nothing, unless HR is cc'd (section 10) |
+| `Blocking <n> minutes for this.` (or hours) | start a timebox |
+| `FYI …` | a comment; the whole line is ignored |
 
 A bare `Regards,` is not a happy sign-off, and anyone who has received one knows it. It
 halts with exit code 1. `Warm regards,` is fine. Only the original email's sign-off sets the
@@ -220,6 +248,16 @@ mentions it.
 
 `Thanks in advance.` is coercive but not binding, so it is a warning, not an assert, and
 there is no way to turn the warning off.
+
+With `Sent from my iPhone` in the message, a line that doesn't parse gets a second chance.
+Misspelled words are matched against the language's own vocabulary, one word at a time
+before several at once, so a name you made up only changes if nothing else works. Every fix
+prints a warning, such as ``autocorrected `Circlign` to `circling` ``.
+
+`Blocking 30 minutes for this.` starts a timebox. Every statement after it costs one second
+of the meeting, and so does every loop check, which means 30 minutes buys 1,800 statements.
+Once time is up the program stops with `we're over time`. An out-of-office can't save it,
+because the auto-reply is over time too. Everyone on a reply-all shares the same clock.
 
 ---
 
@@ -388,11 +426,73 @@ where Dave and Priya each added 1 to a shared counter 20,000 times, the counter 
 
 When a reply fails, the program stops with that error after the other replies finish, unless
 an out-of-office around `Replying all.` catches it. A quoted message can carry its own `Cc:`
-line, which is the list for any `Replying all.` in that message.
+line, which is the list for any `Replying all.` in that message. HR is never called, because
+HR is only cc'd for visibility (section 10).
 
 ---
 
-## 8. Examples
+## 8. The backlog
+
+| Idiom | Semantics |
+|---|---|
+| `Adding <a> to the backlog.` | add `a` to the backlog |
+| `Picking up the next backlog item as <var>.` | take the oldest item |
+| `Picking up the most urgent backlog item as <var>.` | take the newest item |
+| `we still have a backlog` | the backlog isn't empty (condition) |
+| `the backlog is empty` | the backlog is empty (condition) |
+| `the size of the backlog` | how many items it holds (expression) |
+
+The next item is the one that has waited longest. The most urgent one is whatever came in
+last, which is how urgency usually works. Picking up from an empty backlog is an error.
+
+A word in front names a separate backlog: `Adding 5 to the design backlog.` and
+`we still have a design backlog`. Backlogs belong to the whole thread. Offline scopes don't
+hide them, and every reply to a reply-all sees the same ones.
+
+---
+
+## 9. Jargon
+
+```
+Going forward, "let's action [ticket]" means "Adding [ticket] to the backlog".
+
+Let's action 3.
+Let's action 5.
+```
+
+`Going forward, "<phrase>" means "<statement>".` teaches the thread a new phrase. Before
+anything runs, every later line that matches the phrase is replaced with the statement,
+including lines in the quoted thread below. Lines above the definition keep their old
+meaning, since it only applies going forward.
+
+A word in `[brackets]` matches anything and carries it across. When the statement doesn't end
+in punctuation, it takes the phrase's, so `Let's action 3.` becomes `Adding 3 to the backlog.`
+Jargon can be defined in terms of other jargon, and it can take over a built-in phrase,
+sign-offs included. Jargon that keeps expanding into itself is an error.
+
+---
+
+## 10. When HR is cc'd
+
+With `HR` on the `Cc:` line, the email has to stay professional. Between a fifth and a third
+of its statements, counting the ones inside blocks, must be pleasantries:
+
+- `Hope you're well.` or `Hope you are doing well.`
+- `Hope this helps.` or `Hope you had a great weekend.`
+- `Thanks!`, `Thank you.`, `Appreciate it.` or `Much appreciated.`
+- `Thanks in advance.` or `Sorry for the delay!`
+
+Too few is `this email is too curt`, and too many is `this email is sycophantic`. Both are
+errors before anything runs. FYI lines and jargon definitions don't count either way. The
+rule comes from INTERCAL, which rejects a program that doesn't say PLEASE often enough, and
+also one that says it too often.
+
+Without HR, pleasantries do nothing and nobody is counting. `Replying all.` never calls HR,
+because HR never replies.
+
+---
+
+## 11. Examples
 
 ### Hello World
 
@@ -456,15 +556,181 @@ Best,
 Ihor
 ```
 
+### Async standup
+
+A backlog, jargon, a hiring freeze, a pronoun and a mail merge, with HR watching. It prints
+`4 engineers, 16 points this sprint`.
+
+```
+Subject: Async standup — no call today
+Cc: HR <hr@example.com>
+
+Hi team,
+
+Hope you're well.
+FYI, this replaces the 9am call.
+Going forward, "let's action [ticket]" means "Adding [ticket] to the backlog".
+
+Just to level-set, we have 4 engineers.
+We have a hiring freeze on engineers.
+Good news — we've added another engineer.
+
+Let's action 3.
+Let's action 5.
+Let's action 8.
+
+Just to level-set, points is 0.
+Per my last email, while we still have a backlog:
+> Picking up the next backlog item as ticket.
+> Rolling it into points.
+
+Circling back on "[engineers] engineers, [points] points this sprint".
+Thanks!
+Hope this helps.
+
+Best,
+Ihor
+```
+
+### Truth-machine
+
+The [esolangs truth-machine](https://esolangs.org/wiki/Truth-machine): read a number, print 0
+once, or print 1 forever. Here "forever" is Dave bumping the thread. Put
+`Blocking 1 minute for this.` under the greeting and forever lasts 28 ones, then
+`we're over time`.
+
+```
+Subject: Quick yes/no — need an answer
+
+Hi Dave,
+
+Just to level-set, answer is 0.
+Please advise.
+Thanks in advance.
+
+If answer is at zero:
+> Circling back on answer.
+That said:
+> As discussed, Dave.
+
+Best,
+Ihor
+
+On Tue, 8 Sep 2026, Dave Okonkwo <dave@example.com> wrote:
+> Hi Ihor,
+>
+> Circling back on answer.
+> Bumping this.
+>
+> Best,
+> Dave
+```
+
+### 99 unread emails
+
+[99 bottles of beer](https://esolangs.org/wiki/99_bottles_of_beer), adapted for the office.
+It starts with `99 unread emails in the inbox, 99 unread emails.` and ends at inbox zero, which
+never lasts.
+
+```
+Subject: Re: Re: Re: inbox zero initiative
+
+Hi all,
+
+Just to level-set, we have 99 unread emails.
+
+Per my last email, while we still have unread emails:
+> If we're over 1 on emails:
+> > Circling back on "[emails] unread emails in the inbox, [emails] unread emails.".
+> That said:
+> > Circling back on "1 unread email in the inbox, 1 unread email.".
+> Quick flag: one email is now closed.
+> If we're over 1 on it:
+> > Circling back on "Archive one, mark it as read, [emails] unread emails in the inbox.".
+> That said, if we're over 0 on it:
+> > Circling back on "Archive one, mark it as read, 1 unread email in the inbox.".
+> That said:
+> > Circling back on "Archive one, mark it as read, inbox zero.".
+> Circling back on "".
+
+Circling back on "No unread emails in the inbox, no unread emails.".
+Circling back on "Check again, and there are 99 unread emails in the inbox.".
+
+Best,
+Ihor
+```
+
+### Planning poker
+
+Each story in the backlog gets a random estimate. The round is offline, so `story` and
+`estimate` vanish after each vote, while `total` keeps adding up. One run printed:
+
+```
+Story 101: 8 points
+Story 102: 12 points
+Story 103: 6 points
+Total: 26 points, give or take
+```
+
+```
+Subject: Planning poker — async, please vote by EOD
+
+Hi team,
+
+Adding 101 to the backlog.
+Adding 102 to the backlog.
+Adding 103 to the backlog.
+
+Just to level-set, total is 0.
+
+Per my last email, while we still have a backlog:
+> Happy to take this offline.
+> Picking up the next backlog item as story.
+> Just to level-set, estimate is somewhere between 1 and 13.
+> Circling back on "Story [story]: [estimate] points".
+> Rolling estimate into total.
+
+Circling back on "Total: [total] points, give or take".
+
+Best,
+Ihor
+```
+
+### Sent from my iPhone
+
+Five typos, and it still prints `4` and then `all reqs filled`, with a warning for every fix.
+
+```
+Subject: Re: quick update on hiring
+
+Hi Priya,
+
+Just to levl-set, we have 3 open reqs.
+Good news — we've addded another req.
+Circlign back on reqs.
+
+Per my last emaill, while we still have reqs:
+> Quick flag: one req is now closedd.
+
+Circling back on "all reqs filled".
+
+Best,
+Ihor
+
+Sent from my iPhone
+```
+
 ---
 
-## 9. Errors
+## 12. Errors
 
 Diagnostics are written in register. An error that no out-of-office catches stops the program
 with exit code 2.
 
 ```
-warning: `Sent from my iPhone` present; optimizations disabled.
+warning: `Sent from my iPhone` present; optimizations disabled, autocorrect on.
+
+warning: autocorrected `Circlign` to `circling` (line 6)
 
 error: Dave isn't on this thread. Happy to resend (line 3)
 
@@ -487,6 +753,18 @@ error: the attachment `finance.rgrd` didn't come through. Can you resend? (line 
 
 error: nobody is cc'd. Reply-all to whom? (line 7)
 
+error: HR is cc'd and this email is too curt. Maybe open with `Hope you're well.` (line 2)
+
+error: the backlog is empty. Nothing to pick up, so enjoy the quiet sprint (line 9)
+
+error: we're over time. Let's continue next week (line 12)
+
+error: somewhere between 8 and 3 isn't a range. Did you mean between 3 and 8? (line 5)
+
+error: not sure what `it` refers to. Can you be more specific? (line 5)
+
+error: this jargon goes in circles. Can someone say it in plain English? (line 7)
+
 error: no sign-off. The thread is still open.
 ```
 
@@ -494,7 +772,7 @@ The last one has no line number, because the problem is everything after the las
 
 ---
 
-## 10. Computational class
+## 13. Computational class
 
 `Regards,` is Turing complete, because it can simulate a two-counter
 [Minsky machine](https://esolangs.org/wiki/Minsky_machine), and those are known to be
@@ -508,7 +786,7 @@ state that jumps on zero tests its counter with `is at zero` before setting the 
 
 ---
 
-## 11. Design decisions
+## 14. Design decisions
 
 ### Settled
 
@@ -523,16 +801,18 @@ state that jumps on zero tests its counter with `is at zero` before setting the 
   plain call keeps sharing everything, so programs written before `re:` existed still work.
 - **Reply-all has no locking.** Replies share variables and updates can be lost. Nobody
   coordinates a real reply-all either.
+- **`Sent from my iPhone` turns on autocorrect.** A tree-walking interpreter has no
+  optimizations to disable, and excusing typos is what that signature is for anyway.
+- **Politeness is only checked when HR is cc'd.** Otherwise every two-line email would need
+  a pleasantry, and nobody writes those unless someone is watching.
 
 ### Still open
 
-- **What `Sent from my iPhone` should actually do.** A tree-walking interpreter has no
-  optimizations to disable, so for now it only prints its warning. The better use is typo
-  tolerance: fuzzy-match idioms, because that is what the signature excuses.
+Nothing right now. Suggestions are welcome, ideally without a meeting.
 
 ---
 
-## 12. Implementation
+## 15. Implementation
 
 The reference interpreter is a tree-walking interpreter written in Python 3. It has no
 dependencies.
@@ -547,26 +827,32 @@ Exit codes: 0 for a warm sign-off, 1 for a bare `Regards,`, 2 for an error in th
 
 ```
 regards/
-  README.md          this file
-  LICENSE            CC0 1.0
-  regards.py         lexer, parser, interpreter
+  README.md              this file
+  LICENSE                CC0 1.0
+  regards.py             lexer, parser, interpreter
   examples/
     hello.rgrd
     countdown.rgrd
     fizzbuzz.rgrd
     factorial.rgrd
-    dave.rgrd        calling a person from the quoted thread
-    forecast.rgrd    recursion with a net-net and the ask
-    ooo.rgrd         an auto-reply catching a division by zero
-    attachment.rgrd  calling Priya from finance.rgrd
+    dave.rgrd            calling a person from the quoted thread
+    forecast.rgrd        recursion with a net-net and the ask
+    ooo.rgrd             an auto-reply catching a division by zero
+    attachment.rgrd      calling Priya from finance.rgrd
     finance.rgrd
-    reply_all.rgrd   Dave and Priya replying at once
+    reply_all.rgrd       Dave and Priya replying at once
+    standup.rgrd         backlog, jargon, a freeze and a mail merge, with HR on cc
+    truth_machine.rgrd   read a number, then bump the thread forever
+    unread.rgrd          99 bottles of beer, as 99 unread emails
+    planning_poker.rgrd  random estimates for a backlog of stories
+    typos.rgrd           five typos, fixed by Sent from my iPhone
   tests/
     test_regards.py
 ```
 
 The lexer works line by line. It counts the leading `>` markers to get the quote depth and
-matches the rest of the line against the idiom table. Quote depth then becomes a tree of
+matches the rest of the line against the idiom table, after dropping FYI lines and expanding
+jargon. Quote depth then becomes a tree of
 blocks, much as Python turns indentation into INDENT and DEDENT tokens, and the interpreter
 walks that tree. Variables live in a stack of scopes, with the shared ones at the bottom and
 any offline ones above. Each reply to a reply-all runs on its own Python thread.
@@ -576,7 +862,7 @@ and the idiom table is also the joke, so the work and the joke are the same work
 
 ---
 
-## 13. License
+## 16. License
 
 Everything in this repository, including this specification, is dedicated to the public
 domain under [CC0 1.0](LICENSE). Feel free to reply-all.

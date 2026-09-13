@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 """Reference interpreter for `Regards,` — a language written as a corporate email thread."""
 
+import difflib
 import os
+import random
 import re
 import sys
 import threading
 import time
 import traceback
+from collections import deque
 
 SIGN_OFFS = {"best", "regards", "thanks", "cheers", "warm regards", "kind regards",
              "best regards", "many thanks", "sincerely"}
@@ -15,6 +18,13 @@ GREETING = re.compile(r"^(hi|hello|hey|dear)\b.*,$", re.I)
 THREAD_HEADER = re.compile(r"^on .*wrote:$", re.I)
 CC_HEADER = re.compile(r"^cc:(.*)$", re.I)
 PRAGMA_IPHONE = re.compile(r"^sent from my iphone$", re.I)
+POSTSCRIPT = re.compile(r"^(p\.?\s?)+s\b", re.I)
+COMMENT = re.compile(r"^fyi\b", re.I)
+JARGON = re.compile(r'^going forward, "(?P<x>.+?)" means "(?P<y>.+)"\.?$', re.I)
+PLACEHOLDER = re.compile(r"\[([^\[\]]+)\]")
+PRONOUNS = {"it", "that"}
+PLEASANTRIES = {"pleasantry", "tia", "sleep"}
+HR = "hr"
 
 
 class RegardsError(Exception):
@@ -82,6 +92,55 @@ def first_names(header):
     return names
 
 
+def preprocess(lines):
+    """Drop FYI lines, and expand jargon defined with `Going forward` in every line after it."""
+    jargon = []
+    out = []
+    for depth, text, n in lines:
+        definition = JARGON.match(text)
+        if COMMENT.match(text):
+            text = ""
+        elif definition:
+            jargon.insert(0, jargon_rule(definition.group("x"), definition.group("y")))
+            text = ""
+        elif jargon:
+            text = expand_jargon(text, jargon, n)
+        out.append((depth, text, n))
+    return out
+
+
+def jargon_rule(phrase, meaning):
+    """`let's synergize on [thing]` -> a regex with one group per placeholder."""
+    names = []
+    pattern = ""
+    for i, part in enumerate(PLACEHOLDER.split(phrase.rstrip(".!?:"))):
+        if i % 2 == 0:
+            pattern += re.escape(part)
+            continue
+        name = part.strip().lower()
+        if name in names:
+            pattern += f"(?P=g{names.index(name)})"
+        else:
+            pattern += f"(?P<g{len(names)}>.+?)"
+            names.append(name)
+    return re.compile(pattern + r"(?P<end>[.!?:]?)", re.I), names, meaning
+
+
+def expand_jargon(text, jargon, n):
+    for _ in range(MAX_JARGON_EXPANSIONS):
+        for regex, names, meaning in jargon:
+            m = regex.fullmatch(text)
+            if m:
+                break
+        else:
+            return text
+        words = {name: m.group(f"g{i}") for i, name in enumerate(names)}
+        text = PLACEHOLDER.sub(lambda p: words.get(p.group(1).strip().lower(), p.group(0)), meaning)
+        if not text.endswith((".", ",", "!", "?", ":")):
+            text += m.group("end") or "."
+    fail(n, "this jargon goes in circles. Can someone say it in plain English?")
+
+
 # ---------------------------------------------------------------- parsing
 
 def parse_message(lines, base):
@@ -90,11 +149,12 @@ def parse_message(lines, base):
     Returns (body_nodes, sign_off, people) where people maps first name -> body nodes.
     """
     i = 0
-    cc = []
+    cc, cc_line = [], None
     while i < len(lines) and not (lines[i][0] == base and GREETING.match(lines[i][1])):
         header = CC_HEADER.match(lines[i][1]) if lines[i][0] == base else None
         if header:
             cc += first_names(header.group(1))
+            cc_line = lines[i][2]
         i += 1
     if i == len(lines):
         fail(lines[0][2] if lines else None, "no greeting. Who is this addressed to?")
@@ -118,6 +178,7 @@ def parse_message(lines, base):
 
     people = {}
     signature_seen = False
+    autocorrect = False
     while i < len(lines):
         depth, text, n = lines[i]
         i += 1
@@ -137,21 +198,37 @@ def parse_message(lines, base):
             for name, nodes in q_people.items():
                 people.setdefault(name, nodes)
         elif depth == base and PRAGMA_IPHONE.match(text):
-            print("warning: `Sent from my iPhone` present; optimizations disabled.", file=sys.stderr)
+            print("warning: `Sent from my iPhone` present; optimizations disabled, autocorrect on.",
+                  file=sys.stderr)
+            autocorrect = True
+        elif depth == base and POSTSCRIPT.match(text):
+            continue
         elif depth == base and not signature_seen:
             signature_seen = True
         elif base == 0:
             fail(n, f"unreachable code after `{sign_off.title()},`.\n"
                     "       Nothing below a sign-off is read. This is true of email generally.")
 
-    tree = build_tree(body, 0, 0)[0]
+    tree = build_tree(body, 0, 0, autocorrect)[0]
     for node in walk(tree):
         if node["kind"] == "reply_all":
             node["cc"] = cc
+    if HR in cc:
+        check_politeness(tree, cc_line)
     return tree, sign_off, people
 
 
-def build_tree(items, i, depth):
+def check_politeness(tree, line):
+    """With HR on cc, between a fifth and a third of the statements have to be pleasantries."""
+    kinds = [node["kind"] for node in walk(tree)]
+    polite = sum(kind in PLEASANTRIES for kind in kinds)
+    if polite * 5 < len(kinds):
+        fail(line, "HR is cc'd and this email is too curt. Maybe open with `Hope you're well.`")
+    if polite * 3 > len(kinds):
+        fail(line, "HR is cc'd and this email is sycophantic. Tone it down")
+
+
+def build_tree(items, i, depth, autocorrect=False):
     nodes = []
     while i < len(items):
         d, text, n = items[i]
@@ -159,10 +236,10 @@ def build_tree(items, i, depth):
             break
         if d > depth:
             fail(n, "quoted deeper than anything it could be replying to")
-        node = parse_statement(text, n)
+        node = parse_statement(text, n, autocorrect)
         i += 1
         if text.endswith(":"):
-            node["body"], i = build_tree(items, i, depth + 1)
+            node["body"], i = build_tree(items, i, depth + 1, autocorrect)
             if not node["body"]:
                 fail(n, "this needs a reply quoted underneath it")
         nodes.append(node)
@@ -180,6 +257,8 @@ V = r"[a-z][a-z' ]*?"
 
 EXPR_PATTERNS = [
     (rf"^what's left after splitting (?P<b>{V}) across (?P<a>.+)$", "mod"),
+    (r"^somewhere between (?P<lo>.+?) and (?P<hi>.+)$", "random"),
+    (r"^the size of the (?:(?P<q>[a-z]+) )?backlog$", "backlog_size"),
     (r"^(?P<p>[a-z]+)'s take(?: on (?P<a>.+))?$", "take"),
     (rf"^(?P<n>{NUM})$", "num"),
     (rf"^(?P<v>{V})$", "var"),
@@ -187,6 +266,8 @@ EXPR_PATTERNS = [
 
 COND_PATTERNS = [
     (rf"^there's nothing left after splitting (?P<v>{V}) across (?P<x>.+)$", "divisible"),
+    (r"^we still have an? (?:(?P<q>[a-z]+) )?backlog$", "backlog"),
+    (r"^the (?:(?P<q>[a-z]+) )?backlog is empty$", "backlog_empty"),
     (rf"^we still have (?P<v>{V})$", "positive"),
     (rf"^(?P<v>{V}) is at zero$", "zero"),
     # greedy, so `we're under Dave's take on budget on sprint` splits at the last "on"
@@ -207,6 +288,11 @@ STATEMENT_PATTERNS = [
     (rf"^backing (?P<x>.+?) out of (?P<v>{V})\.$", "sub"),
     (rf"^scaling (?P<v>{V}) by (?P<x>.+)\.$", "mul"),
     (rf"^splitting (?P<v>{V}) across (?P<x>.+)\.$", "div"),
+    (rf"^we have a hiring freeze on (?P<v>{V})\.$", "freeze"),
+    (rf"^the (?:hiring )?freeze on (?P<v>{V}) is lifted\.$", "unfreeze"),
+    (r"^adding (?P<x>.+?) to the (?:(?P<q>[a-z]+) )?backlog\.$", "enqueue"),
+    (rf"^picking up the next (?:(?P<q>[a-z]+) )?backlog item as (?P<v>{V})\.$", "dequeue"),
+    (rf"^picking up the most urgent (?:(?P<q>[a-z]+) )?backlog item as (?P<v>{V})\.$", "pop"),
     (r"^that said, if (?P<c>.+):$", "elif"),
     (r"^that said:$", "else"),
     (r"^if (?P<c>.+):$", "if"),
@@ -219,14 +305,55 @@ STATEMENT_PATTERNS = [
     (r"^i(?: am|'m) currently ooo, returning (?P<d>.+):$", "ooo"),
     (r"^resending with the attachment: (?P<f>.+)\.$", "attach"),
     (r"^replying all(?:, re: (?P<x>.+))?\.$", "reply_all"),
+    (r"^blocking (?P<t>\d+) (?P<u>minutes?|hours?) for this\.$", "timebox"),
     (r'^circling back on "(?P<s>.*)"\.$', "print_lit"),
     (rf"^circling back on (?P<x>.+)\.$", "print"),
     (r"^\+leadership for visibility\.$", "flush"),
     (r"^(\+[a-z]+|looping in [a-z]+\.)$", "noop"),
+    (r"^(?:hope (?:you're|you are) (?:doing )?well|hope this helps|hope you had a (?:great|good|nice|lovely) "
+     r"weekend|thanks|thank you|appreciate it|much appreciated)[.!]$", "pleasantry"),
     (r"^(thoughts\?|please advise\.)$", "read"),
     (r"^sorry for the delay!$", "sleep"),
     (r"^thanks in advance\.$", "tia"),
 ]
+
+
+def pattern_words(patterns):
+    """The fixed words of every idiom, which is what autocorrect is allowed to correct towards."""
+    words = set()
+    for pattern, _ in patterns:
+        pattern = re.sub(r"\(\?P<\w+>[^()]*\)", " ", pattern)  # user-supplied text
+        pattern = re.sub(r"\[[^\]]*\]", " ", pattern)           # character classes
+        words.update(word for word in re.findall(r"[a-z][a-z'-]*", pattern) if len(word) >= 3)
+    return words
+
+
+VOCABULARY = sorted(pattern_words(EXPR_PATTERNS + COND_PATTERNS + STATEMENT_PATTERNS))
+
+
+def autocorrections(text):
+    """Candidate fixes for a mistyped line: each misspelled word on its own first, then all together."""
+    words = text.split(" ")
+    fixes = {}
+    for i, word in enumerate(words):
+        typed = word.strip(",.:;!?\"")
+        if len(typed) < 3 or typed.lower() in VOCABULARY:
+            continue
+        match = difflib.get_close_matches(typed.lower(), VOCABULARY, n=1, cutoff=0.8)
+        if match:
+            fixes[i] = (typed, match[0])
+
+    def apply(indices):
+        fixed = list(words)
+        for i in indices:
+            typed, right = fixes[i]
+            fixed[i] = words[i].replace(typed, right, 1)
+        return " ".join(fixed), [fixes[i] for i in indices]
+
+    for i in fixes:
+        yield apply([i])
+    if len(fixes) > 1:
+        yield apply(list(fixes))
 
 
 def parse_expr(text, n):
@@ -236,6 +363,10 @@ def parse_expr(text, n):
             g = m.groupdict()
             if kind == "mod":
                 return ("mod", var_key(g["b"]), parse_expr(g["a"], n))
+            if kind == "random":
+                return ("random", parse_expr(g["lo"], n), parse_expr(g["hi"], n))
+            if kind == "backlog_size":
+                return ("backlog_size", (g["q"] or "").lower())
             if kind == "take":
                 return ("take", g["p"].lower(), parse_expr(g["a"], n) if g["a"] else None)
             if kind == "num":
@@ -249,12 +380,32 @@ def parse_cond(text, n):
         m = re.match(pat, text, re.I)
         if m:
             g = m.groupdict()
+            if "q" in g:
+                return (kind, (g["q"] or "").lower(), None)
             x = parse_expr(g["x"], n) if "x" in g else None
             return (kind, var_key(g["v"]), x)
     fail(n, f"not sure what `{text}` means as a condition. Can we align offline?")
 
 
-def parse_statement(text, n):
+def parse_statement(text, n, autocorrect=False):
+    """With `Sent from my iPhone`, a line that doesn't parse gets its typos fixed and another go."""
+    try:
+        return match_statement(text, n)
+    except RegardsError as original:
+        if not autocorrect:
+            raise
+        for fixed, changes in autocorrections(text):
+            try:
+                node = match_statement(fixed, n)
+            except RegardsError:
+                continue
+            for typed, right in changes:
+                print(f"warning: autocorrected `{typed}` to `{right}` (line {n})", file=sys.stderr)
+            return node
+        raise original
+
+
+def match_statement(text, n):
     for pat, kind in STATEMENT_PATTERNS:
         m = re.match(pat, text, re.I)
         if not m:
@@ -271,6 +422,10 @@ def parse_statement(text, n):
             node["person"] = g["p"].lower()
         if g.get("f"):
             node["file"] = g["f"]
+        if "q" in g:
+            node["queue"] = (g["q"] or "").lower()
+        if g.get("t"):
+            node["seconds"] = int(g["t"]) * (3600 if g["u"].lower().startswith("hour") else 60)
         if "s" in g:
             node["text"] = m.group("s")
         return node
@@ -280,24 +435,40 @@ def parse_statement(text, n):
 # ---------------------------------------------------------------- execution
 
 class Interpreter:
-    def __init__(self, people, stdin=sys.stdin, stdout=sys.stdout, folder="."):
+    def __init__(self, people, stdin=sys.stdin, stdout=sys.stdout, folder=".", rng=None):
         self.globals = {}
         self.scopes = [self.globals]
         self.people = people
         self.stdin = stdin
         self.stdout = stdout
         self.folder = folder
+        self.rng = rng or random.Random()
+        self.frozen = set()
+        self.backlogs = {}
+        self.meeting = {"seconds left": None}
         self.last_var = None
+        self.subject = None
         self.last_ok = True
         self.depth = 0
 
     def fork(self):
         """Another reader of the same thread: shared variables and people, its own call stack."""
-        child = Interpreter(self.people, self.stdin, self.stdout, self.folder)
+        child = Interpreter(self.people, self.stdin, self.stdout, self.folder, self.rng)
         child.globals = self.globals
         child.scopes = [self.globals]
+        child.frozen = self.frozen
+        child.backlogs = self.backlogs
+        child.meeting = self.meeting
         child.depth = self.depth
         return child
+
+    def resolve(self, name, line):
+        """`it` and `that` mean whichever variable was mentioned last before this statement."""
+        if name not in PRONOUNS:
+            return name
+        if self.subject is None:
+            fail(line, f"not sure what `{name}` refers to. Can you be more specific?")
+        return self.subject
 
     def lookup(self, name):
         for scope in reversed(self.scopes):
@@ -306,27 +477,51 @@ class Interpreter:
         return None
 
     def get(self, name, line):
+        name = self.resolve(name, line)
         scope = self.lookup(name)
         if scope is None:
             fail(line, f"nobody told me about `{name}`. Can you send it over?")
         self.last_var = name
         return scope[name]
 
-    def declare(self, name, value):
-        self.scopes[-1][name] = value
+    def declare(self, name, value, line):
+        name = self.resolve(name, line)
+        if name not in self.frozen:
+            self.scopes[-1][name] = value
         self.last_var = name
 
-    def assign(self, name, value):
+    def assign(self, name, value, line):
         """Update the nearest variable with this name, or create it in the innermost scope."""
-        scope = self.lookup(name)
-        if scope is None:
-            scope = self.scopes[-1]
-        scope[name] = value
+        name = self.resolve(name, line)
+        if name not in self.frozen:
+            scope = self.lookup(name)
+            if scope is None:
+                scope = self.scopes[-1]
+            scope[name] = value
         self.last_var = name
 
     def say(self, text):
         # one write per line, so people replying all at once can't split each other's lines
         self.stdout.write(f"{text}\n")
+
+    def merge(self, text):
+        """Fill [placeholders] from variables. Unknown ones go out as typed, like any botched mail merge."""
+        def fill(placeholder):
+            name = var_key(placeholder.group(1)) if placeholder.group(1).split() else None
+            if name in PRONOUNS:
+                name = self.subject
+            scope = self.lookup(name) if name else None
+            return str(scope[name]) if scope is not None else placeholder.group(0)
+        return PLACEHOLDER.sub(fill, text)
+
+    def tick(self, line):
+        """Each statement takes a second of the meeting, once someone has blocked time for it."""
+        left = self.meeting["seconds left"]
+        if left is None:
+            return
+        if left <= 0:
+            fail(line, "we're over time. Let's continue next week")
+        self.meeting["seconds left"] = left - 1
 
     def eval(self, expr, line):
         kind = expr[0]
@@ -340,6 +535,14 @@ class Interpreter:
             if value is None:
                 fail(line, f"{person.title()} signed off without a net-net. What's the takeaway?")
             return value
+        if kind == "random":
+            low, high = self.eval(expr[1], line), self.eval(expr[2], line)
+            if low > high:
+                fail(line, f"somewhere between {low} and {high} isn't a range. "
+                           f"Did you mean between {high} and {low}?")
+            return self.rng.randint(low, high)
+        if kind == "backlog_size":
+            return len(self.backlogs.get(expr[1], ()))
         divisor = self.eval(expr[2], line)
         if divisor == 0:
             fail(line, "splitting across zero. That's not a realistic plan")
@@ -347,6 +550,10 @@ class Interpreter:
 
     def test(self, cond, line):
         kind, var, x = cond
+        if kind == "backlog":
+            return bool(self.backlogs.get(var))
+        if kind == "backlog_empty":
+            return not self.backlogs.get(var)
         v = self.get(var, line)
         if kind == "positive":
             return v > 0
@@ -392,16 +599,19 @@ class Interpreter:
         except (OSError, UnicodeDecodeError):
             fail(line, f"the attachment `{name}` didn't come through. Can you resend?")
         try:
-            _, _, people = parse_message(lex(source), 0)
+            _, _, people = parse_message(preprocess(lex(source)), 0)
         except RegardsError as e:
             fail(line, f"the attachment `{name}` is garbled: {str(e).removeprefix('error: ')}")
         self.people.update(people)
 
     def reply_all(self, node, line):
-        """Everyone on cc replies at once. They share variables and nobody coordinates."""
+        """Everyone on cc replies at once, except HR. They share variables and nobody coordinates."""
         if not node["cc"]:
             fail(line, "nobody is cc'd. Reply-all to whom?")
-        for person in node["cc"]:
+        recipients = [person for person in node["cc"] if person != HR]
+        if not recipients:
+            fail(line, "only HR is cc'd, and HR never replies")
+        for person in recipients:
             if person not in self.people:
                 fail(line, f"{person.title()} isn't on this thread. Happy to resend")
         arg = ("num", self.eval(node["expr"], line)) if "expr" in node else None
@@ -413,7 +623,7 @@ class Interpreter:
             except BaseException as e:
                 errors.append(e)
 
-        replies = [threading.Thread(target=reply, args=(self.fork(), person)) for person in node["cc"]]
+        replies = [threading.Thread(target=reply, args=(self.fork(), person)) for person in recipients]
         old_size = threading.stack_size(THREAD_STACK_SIZE)
         try:
             for thread in replies:
@@ -438,6 +648,8 @@ class Interpreter:
         i = 0
         while i < len(nodes):
             node = nodes[i]
+            self.subject = self.last_var
+            self.tick(node["line"])
             if node["kind"] == "offline":
                 self.scopes.append({})
                 try:
@@ -472,22 +684,38 @@ class Interpreter:
         k, line = node["kind"], node["line"]
         var = node.get("var")
         if k == "declare":
-            self.declare(var, self.eval(node["expr"], line))
+            self.declare(var, self.eval(node["expr"], line), line)
         elif k == "set":
-            self.assign(var, self.eval(node["expr"], line))
+            self.assign(var, self.eval(node["expr"], line), line)
         elif k == "zero":
-            self.assign(var, 0)
+            self.assign(var, 0, line)
         elif k in ("inc", "dec", "double", "halve"):
             v = self.get(var, line)
-            self.assign(var, {"inc": v + 1, "dec": v - 1, "double": v * 2, "halve": v // 2}[k])
+            self.assign(var, {"inc": v + 1, "dec": v - 1, "double": v * 2, "halve": v // 2}[k], line)
         elif k in ("add", "sub", "mul", "div"):
             a = self.eval(node["expr"], line)
             b = self.get(var, line)
             if k == "div" and a == 0:
                 fail(line, "splitting across zero. That's not a realistic plan")
-            self.assign(var, {"add": b + a, "sub": b - a, "mul": b * a, "div": b // a if a else 0}[k])
+            self.assign(var, {"add": b + a, "sub": b - a, "mul": b * a, "div": b // a if a else 0}[k], line)
+        elif k == "freeze":
+            self.frozen.add(self.resolve(var, line))
+        elif k == "unfreeze":
+            self.frozen.discard(self.resolve(var, line))
+        elif k == "enqueue":
+            self.backlogs.setdefault(node["queue"], deque()).append(self.eval(node["expr"], line))
+        elif k in ("dequeue", "pop"):
+            backlog = self.backlogs.get(node["queue"])
+            if not backlog:
+                name = f"{node['queue']} backlog" if node["queue"] else "backlog"
+                fail(line, f"the {name} is empty. Nothing to pick up, so enjoy the quiet sprint")
+            self.assign(var, backlog.popleft() if k == "dequeue" else backlog.pop(), line)
         elif k == "while":
-            while self.test(node["cond"], line):
+            while True:
+                self.subject = self.last_var
+                self.tick(line)
+                if not self.test(node["cond"], line):
+                    break
                 self.run_block(node["body"])
         elif k == "bump":
             raise Bump()
@@ -499,8 +727,10 @@ class Interpreter:
             self.attach(node["file"], line)
         elif k == "reply_all":
             self.reply_all(node, line)
+        elif k == "timebox":
+            self.meeting["seconds left"] = node["seconds"]
         elif k == "print_lit":
-            self.say(node["text"])
+            self.say(self.merge(node["text"]))
         elif k == "print":
             self.say(self.eval(node["expr"], line))
         elif k == "flush":
@@ -510,7 +740,7 @@ class Interpreter:
                 fail(line, "asking for thoughts on nothing in particular")
             raw = self.stdin.readline()
             try:
-                self.assign(self.last_var, int(raw.strip()))
+                self.assign(self.last_var, int(raw.strip()), line)
                 self.last_ok = True
             except ValueError:
                 self.last_ok = False
@@ -522,13 +752,14 @@ class Interpreter:
 
 
 MAX_CALL_DEPTH = 1000
+MAX_JARGON_EXPANSIONS = 20
 # Each nested call costs several Python frames, and more inside loops and ifs.
 PYTHON_RECURSION_LIMIT = 50_000
 # Replies run on their own threads, which get a small stack by default.
 THREAD_STACK_SIZE = 256 * 1024 * 1024
 
 
-def run(source, stdin=sys.stdin, stdout=sys.stdout, path=None):
+def run(source, stdin=sys.stdin, stdout=sys.stdout, path=None, rng=None):
     """Run a program. Returns the process exit code.
 
     `path` is where the program lives; attachments are looked for next to it.
@@ -537,8 +768,8 @@ def run(source, stdin=sys.stdin, stdout=sys.stdout, path=None):
     old_limit = sys.getrecursionlimit()
     sys.setrecursionlimit(max(old_limit, PYTHON_RECURSION_LIMIT))
     try:
-        body, sign_off, people = parse_message(lex(source), 0)
-        Interpreter(people, stdin, stdout, folder).run_message(body)
+        body, sign_off, people = parse_message(preprocess(lex(source)), 0)
+        Interpreter(people, stdin, stdout, folder, rng).run_message(body)
     except NetNet as stray:
         fail(stray.line, "`Net-net` in the original email. There's nobody to report back to")
     except RecursionError:

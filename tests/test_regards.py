@@ -1,6 +1,7 @@
 import contextlib
 import io
 import pathlib
+import re
 import sys
 import tempfile
 import time
@@ -32,9 +33,9 @@ def person(name, *body, cc=None):
 
 
 class Examples(unittest.TestCase):
-    def example(self, name):
+    def example(self, name, stdin=""):
         path = ROOT / "examples" / name
-        return run(path.read_text(encoding="utf-8"), path=str(path))
+        return run(path.read_text(encoding="utf-8"), stdin=stdin, path=str(path))
 
     def test_hello(self):
         self.assertEqual(self.example("hello.rgrd"), ("Hello, World\n", 0))
@@ -68,6 +69,52 @@ class Examples(unittest.TestCase):
 
     def test_reply_all(self):
         self.assertEqual(self.example("reply_all.rgrd"), ("4\n250\n", 0))
+
+    def test_standup(self):
+        self.assertEqual(self.example("standup.rgrd"), ("4 engineers, 16 points this sprint\n", 0))
+
+    def test_truth_machine_zero(self):
+        self.assertEqual(self.example("truth_machine.rgrd", stdin="0\n"), ("0\n", 0))
+
+    def test_truth_machine_one_goes_on_until_the_meeting_ends(self):
+        path = ROOT / "examples" / "truth_machine.rgrd"
+        source = path.read_text(encoding="utf-8").replace("Hi Dave,\n", "Hi Dave,\n\nBlocking 1 minute for this.\n")
+        out = io.StringIO()
+        with self.assertRaises(regards.RegardsError) as ctx:
+            regards.run(source, stdin=io.StringIO("1\n"), stdout=out, path=str(path))
+        self.assertIn("we're over time", str(ctx.exception))
+        self.assertGreater(len(out.getvalue().splitlines()), 10)
+        self.assertEqual(set(out.getvalue().split()), {"1"})
+
+    def test_unread_emails(self):
+        expected = []
+        for n in range(99, 0, -1):
+            count = f"{n} unread emails" if n > 1 else "1 unread email"
+            left = ("inbox zero" if n == 1 else "1 unread email in the inbox" if n == 2
+                    else f"{n - 1} unread emails in the inbox")
+            expected += [f"{count} in the inbox, {count}.", f"Archive one, mark it as read, {left}.", ""]
+        expected += ["No unread emails in the inbox, no unread emails.",
+                     "Check again, and there are 99 unread emails in the inbox."]
+        out, code = self.example("unread.rgrd")
+        self.assertEqual((out.splitlines(), code), (expected, 0))
+
+    def test_planning_poker(self):
+        out, code = self.example("planning_poker.rgrd")
+        *stories, total = out.splitlines()
+        self.assertEqual(len(stories), 3)
+        estimates = []
+        for story, line in zip((101, 102, 103), stories):
+            m = re.fullmatch(rf"Story {story}: (\d+) points", line)
+            self.assertIsNotNone(m, line)
+            estimates.append(int(m.group(1)))
+        self.assertTrue(all(1 <= estimate <= 13 for estimate in estimates), estimates)
+        self.assertEqual((total, code), (f"Total: {sum(estimates)} points, give or take", 0))
+
+    def test_typos(self):
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            result = self.example("typos.rgrd")
+        self.assertEqual(result, ("4\nall reqs filled\n", 0))
+        self.assertEqual(err.getvalue().count("autocorrected"), 5)
 
 
 class Semantics(unittest.TestCase):
@@ -453,6 +500,188 @@ class ReplyAll(ErrorCase):
     def test_an_error_in_one_fork_stops_the_program(self):
         after = person("Dave", "Circling back on budget.") + person("Priya", 'Circling back on "fine".')
         self.assertError(email("Replying all.", after=after, cc=self.CC), "nobody told me about `budget`")
+
+
+class Comments(unittest.TestCase):
+    def test_fyi_lines_are_ignored(self):
+        out, _ = run(email("FYI, this is just for context.",
+                           'Circling back on "ok".',
+                           "Just to level-set, x is 1.",
+                           "If we still have x:",
+                           "> FYI: nothing to see here:",
+                           '> Circling back on "still ok".'))
+        self.assertEqual(out, "ok\nstill ok\n")
+
+    def test_ps_below_the_sign_off_is_allowed(self):
+        out, _ = run(email('Circling back on "ok".', after="P.S. Nobody reads this part either.\n"))
+        self.assertEqual(out, "ok\n")
+
+
+class Jargon(ErrorCase):
+    def test_going_forward_defines_a_phrase(self):
+        out, _ = run(email("Just to level-set, revenue is 2.",
+                           'Going forward, "let\'s synergize" means "Doubling down on revenue".',
+                           "Let's synergize.",
+                           "Circling back on revenue."))
+        self.assertEqual(out, "4\n")
+
+    def test_placeholders_carry_words_across(self):
+        out, _ = run(email('Going forward, "let\'s synergize on [thing]" means "Doubling down on [thing]".',
+                           "Just to level-set, budget is 5.",
+                           "Let's synergize on budget.",
+                           "Circling back on budget."))
+        self.assertEqual(out, "10\n")
+
+    def test_jargon_only_applies_going_forward(self):
+        self.assertError(email("Let's synergize.", 'Going forward, "let\'s synergize" means "Bumping this".'),
+                         "`Let's synergize.` isn't something I can action")
+
+    def test_jargon_reaches_the_thread_below(self):
+        out, _ = run(email('Going forward, "send the deck" means "Circling back on "deck attached"".',
+                           "As discussed, Dave.",
+                           after=person("Dave", "Send the deck.")))
+        self.assertEqual(out, "deck attached\n")
+
+    def test_jargon_can_rename_a_sign_off(self):
+        self.assertEqual(run(email('Going forward, "Best," means "Regards,".', 'Circling back on "x".'))[1], 1)
+
+    def test_circular_jargon(self):
+        self.assertError(email('Going forward, "ping" means "pong".', 'Going forward, "pong" means "ping".', "Ping."),
+                         "goes in circles")
+
+
+class MailMerge(unittest.TestCase):
+    def test_placeholders_are_filled_from_variables(self):
+        out, _ = run(email("Just to level-set, we have 3 open reqs.", 'Circling back on "We have [reqs] open reqs".'))
+        self.assertEqual(out, "We have 3 open reqs\n")
+
+    def test_unknown_placeholders_go_out_as_typed(self):
+        out, _ = run(email('Circling back on "Hi [First Name], hope you are well".'))
+        self.assertEqual(out, "Hi [First Name], hope you are well\n")
+
+
+class HiringFreeze(unittest.TestCase):
+    def test_writes_to_a_frozen_variable_do_nothing(self):
+        out, _ = run(email("Just to level-set, we have 2 reqs.",
+                           "We have a hiring freeze on reqs.",
+                           "Good news — we've added another req.",
+                           "Per the attached, reqs is now 10.",
+                           "Circling back on reqs.",
+                           "The freeze on reqs is lifted.",
+                           "Good news — we've added another req.",
+                           "Circling back on reqs."))
+        self.assertEqual(out, "2\n3\n")
+
+
+class Autocorrect(ErrorCase):
+    def test_sent_from_my_iphone_fixes_typos(self):
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            out, _ = run(email("Just to levle-set, x is 2.", "Circlign back on x.", after="\nSent from my iPhone\n"))
+        self.assertEqual(out, "2\n")
+        self.assertIn("autocorrected `Circlign` to `circling`", err.getvalue())
+        self.assertIn("autocorrect on", err.getvalue())
+
+    def test_typos_inside_conditions(self):
+        with contextlib.redirect_stderr(io.StringIO()):
+            out, _ = run(email("Just to level-set, x is 1.", "If we stil have x:", '> Circling back on "yes".',
+                               after="\nSent from my iPhone\n"))
+        self.assertEqual(out, "yes\n")
+
+    def test_typos_are_errors_without_the_iphone(self):
+        self.assertError(email('Circlign back on "x".'), "isn't something I can action")
+
+
+class Backlog(ErrorCase):
+    def test_next_item_is_the_oldest(self):
+        out, _ = run(email("Adding 1 to the backlog.",
+                           "Adding 2 to the backlog.",
+                           "Adding 3 to the backlog.",
+                           "Per my last email, while we still have a backlog:",
+                           "> Picking up the next backlog item as task.",
+                           "> Circling back on task."))
+        self.assertEqual(out, "1\n2\n3\n")
+
+    def test_most_urgent_item_is_the_newest(self):
+        out, _ = run(email("Adding 1 to the backlog.",
+                           "Adding 2 to the backlog.",
+                           "Picking up the most urgent backlog item as task.",
+                           "Circling back on task.",
+                           "Circling back on the size of the backlog."))
+        self.assertEqual(out, "2\n1\n")
+
+    def test_backlogs_have_names(self):
+        out, _ = run(email("Adding 5 to the design backlog.",
+                           "If the backlog is empty:",
+                           '> Circling back on "main backlog empty".',
+                           "Picking up the next design backlog item as task.",
+                           "Circling back on task."))
+        self.assertEqual(out, "main backlog empty\n5\n")
+
+    def test_empty_backlog(self):
+        self.assertError(email("Picking up the next backlog item as task."), "backlog is empty")
+
+
+class Pronouns(ErrorCase):
+    def test_it_is_the_last_variable_mentioned(self):
+        out, _ = run(email("Just to level-set, budget is 5.", "Doubling down on it.", "Circling back on that."))
+        self.assertEqual(out, "10\n")
+
+    def test_it_needs_something_to_refer_to(self):
+        self.assertError(email("Circling back on it."), "not sure what `it` refers to")
+
+
+class Timebox(ErrorCase):
+    def test_running_over_the_meeting(self):
+        self.assertError(email("Blocking 1 minute for this.",
+                               "Just to level-set, x is 1.",
+                               "Per my last email, while we still have x:",
+                               "> Good news — we've added another x."),
+                         "we're over time")
+
+    def test_short_programs_finish_inside_the_meeting(self):
+        out, _ = run(email("Blocking 1 minute for this.",
+                           "Just to level-set, x is 20.",
+                           "Per my last email, while we still have x:",
+                           "> Quick flag: one x is now closed.",
+                           "Circling back on x."))
+        self.assertEqual(out, "0\n")
+
+
+class Estimates(ErrorCase):
+    def test_somewhere_between_is_inclusive_and_random(self):
+        out, _ = run(email("Just to level-set, rounds is 300.",
+                           "Per my last email, while we still have rounds:",
+                           "> Circling back on somewhere between 3 and 8.",
+                           "> Quick flag: one round is now closed."))
+        self.assertEqual(set(out.split()), {"3", "4", "5", "6", "7", "8"})
+
+    def test_upside_down_range(self):
+        self.assertError(email("Circling back on somewhere between 8 and 3."), "isn't a range")
+
+
+class HumanResources(ErrorCase):
+    HR = "HR <hr@example.com>"
+
+    def test_curt_email_with_hr_on_cc(self):
+        self.assertError(email('Circling back on "a".', 'Circling back on "b".', 'Circling back on "c".', cc=self.HR),
+                         "too curt")
+
+    def test_sycophantic_email_with_hr_on_cc(self):
+        self.assertError(email("Hope you're well.", "Thanks!", 'Circling back on "a".', cc=self.HR), "sycophantic")
+
+    def test_polite_email_with_hr_on_cc(self):
+        out, _ = run(email("Hope you're well.", 'Circling back on "a".', 'Circling back on "b".',
+                           'Circling back on "c".', cc=self.HR))
+        self.assertEqual(out, "a\nb\nc\n")
+
+    def test_hr_never_replies_all(self):
+        out, _ = run(email("Hope you're well.", "Replying all.", 'Circling back on "b".', 'Circling back on "c".',
+                           after=person("Dave", 'Circling back on "dave here".'),
+                           cc="Dave Okonkwo <dave@example.com>, " + self.HR))
+        self.assertEqual(out, "dave here\nb\nc\n")
+
+    def test_no_hr_no_politeness_check(self):
+        self.assertEqual(run(email('Circling back on "curt".'))[0], "curt\n")
 
 
 if __name__ == "__main__":

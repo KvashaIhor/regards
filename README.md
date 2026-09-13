@@ -1,5 +1,7 @@
 # `Regards,`
 
+[![tests](https://github.com/KvashaIhor/regards/actions/workflows/tests.yml/badge.svg)](https://github.com/KvashaIhor/regards/actions/workflows/tests.yml)
+
 An esoteric programming language whose source code is a passive-aggressive corporate email thread.
 
 ```
@@ -978,8 +980,8 @@ Nothing right now. Suggestions are welcome, ideally without a meeting.
 
 ## 16. Implementation
 
-The reference interpreter is a tree-walking interpreter written in Python 3. It has no
-dependencies.
+The reference interpreter is a tree-walking interpreter written in Python. It needs Python 3.9
+or newer and nothing else.
 
 ```
 python3 regards.py examples/fizzbuzz.rgrd      # run a program
@@ -995,6 +997,7 @@ Exit codes: 0 for a warm sign-off, 1 for a bare `Regards,`, 2 for an error in th
 regards/
   README.md              this file
   CHANGELOG.md           what's in each version
+  CONTRIBUTING.md        how to change the language without breaking anyone's email
   LICENSE                CC0 1.0
   regards.py             lexer, parser, interpreter
   examples/
